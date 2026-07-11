@@ -27,6 +27,12 @@ export default function Login({
     try {
       const credential = await signInWithEmailAndPassword(auth, e, p);
       const user = credential.user;
+      // Block unverified email/password accounts
+      if (!user.emailVerified) {
+        await auth.signOut();
+        setError("❌ Please verify your email first. Check your Gmail inbox.");
+        return;
+      }
       const displayName = user.displayName || user.email.split("@")[0];
       setCurrentUser(displayName);
       localStorage.setItem("sp_current", displayName);

@@ -2,7 +2,10 @@ import React, { useState } from "react";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
   signInWithPopup,
+  reload,
 } from "firebase/auth";
 import { auth, googleProvider } from "../firebase";
 
@@ -21,6 +24,13 @@ export default function SignUp({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  // Step 2: waiting for email verification
+  const [verifyStep, setVerifyStep] = useState(false);
+  const [verifyEmail, setVerifyEmail] = useState("");
+  const [checkingVerify, setCheckingVerify] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState("");
 
   const handleSignup = async () => {
     const emailVal = email.trim();
@@ -50,13 +60,67 @@ export default function SignUp({
         passVal,
       );
       await updateProfile(credential.user, { displayName: nameVal });
-      setCurrentUser(nameVal);
-      localStorage.setItem("sp_current", nameVal);
-      initApp();
+      // Send verification email to Gmail
+      await sendEmailVerification(credential.user);
+      // Sign out immediately — don't let them in until verified
+      await auth.signOut();
+      setVerifyEmail(emailVal);
+      setVerifyStep(true);
     } catch (err) {
       setError(`❌ ${firebaseErrorMessage(err.code)}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCheckVerified = async () => {
+    setCheckingVerify(true);
+    setVerifyMsg("");
+    setError("");
+    try {
+      // Sign in again to get fresh user object
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        verifyEmail,
+        password,
+      );
+      await reload(credential.user);
+      if (credential.user.emailVerified) {
+        const displayName =
+          credential.user.displayName || credential.user.email.split("@")[0];
+        setCurrentUser(displayName);
+        localStorage.setItem("sp_current", displayName);
+        initApp();
+      } else {
+        await auth.signOut();
+        setError(
+          "❌ Email not verified yet. Please click the link in your Gmail inbox.",
+        );
+      }
+    } catch (err) {
+      setError(`❌ ${firebaseErrorMessage(err.code)}`);
+    } finally {
+      setCheckingVerify(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setResending(true);
+    setVerifyMsg("");
+    setError("");
+    try {
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        verifyEmail,
+        password,
+      );
+      await sendEmailVerification(credential.user);
+      await auth.signOut();
+      setVerifyMsg("✅ Verification email resent! Check your Gmail inbox.");
+    } catch (err) {
+      setError("❌ Failed to resend. Try again.");
+    } finally {
+      setResending(false);
     }
   };
 
@@ -66,6 +130,7 @@ export default function SignUp({
     try {
       const credential = await signInWithPopup(auth, googleProvider);
       const user = credential.user;
+      // Google accounts are always verified
       const displayName = user.displayName || user.email.split("@")[0];
       setCurrentUser(displayName);
       localStorage.setItem("sp_current", displayName);
@@ -79,6 +144,129 @@ export default function SignUp({
     }
   };
 
+  // ── Verification waiting screen ──────────────────────────────────────────
+  if (verifyStep) {
+    return (
+      <div id="signup" className={`screen ${isActive ? "active" : ""}`}>
+        <div className="auth-wrap">
+          <div>
+            <div className="brand-tag">
+              Giggling Platypus Co. 🌲<small>Study Planner Pro</small>
+            </div>
+            <div className="auth-h" style={{ fontSize: "2rem" }}>
+              Check Your
+              <br />
+              Gmail 📧
+            </div>
+            <div className="auth-s" style={{ marginBottom: "20px" }}>
+              We sent a verification link to
+            </div>
+
+            {/* Email pill */}
+            <div
+              style={{
+                background: "rgba(91,141,238,0.08)",
+                border: "1px solid rgba(91,141,238,0.2)",
+                borderRadius: "10px",
+                padding: "10px 16px",
+                textAlign: "center",
+                color: "#5b8dee",
+                fontWeight: 700,
+                fontSize: "0.9rem",
+                marginBottom: "20px",
+                wordBreak: "break-all",
+              }}
+            >
+              {verifyEmail}
+            </div>
+
+            <div
+              style={{
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                borderRadius: "12px",
+                padding: "14px 16px",
+                fontSize: "0.82rem",
+                color: "#8899cc",
+                lineHeight: 1.7,
+                marginBottom: "20px",
+              }}
+            >
+              1. Open your Gmail inbox
+              <br />
+              2. Find the email from{" "}
+              <b style={{ color: "#ffd60a" }}>Study Planner Pro</b>
+              <br />
+              3. Click the <b style={{ color: "#4caf50" }}>verification link</b>
+              <br />
+              4. Come back here and click{" "}
+              <b style={{ color: "#fff" }}>I've Verified</b>
+            </div>
+
+            {error && (
+              <div
+                className="err"
+                style={{ display: "block", marginBottom: "12px" }}
+              >
+                {error}
+              </div>
+            )}
+            {verifyMsg && (
+              <div
+                className="succ"
+                style={{ display: "block", marginBottom: "12px", marginTop: 0 }}
+              >
+                {verifyMsg}
+              </div>
+            )}
+
+            <button
+              className="abtn abtn-b"
+              onClick={handleCheckVerified}
+              disabled={checkingVerify}
+              style={{ marginBottom: "10px" }}
+            >
+              {checkingVerify ? "Checking…" : "✅ I've Verified My Email"}
+            </button>
+
+            <button
+              onClick={handleResend}
+              disabled={resending}
+              style={{
+                width: "100%",
+                background: "transparent",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "12px",
+                color: "#7a87b0",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                padding: "12px",
+                cursor: "pointer",
+                fontFamily: "Outfit, sans-serif",
+              }}
+            >
+              {resending ? "Sending…" : "🔄 Resend Verification Email"}
+            </button>
+          </div>
+
+          <div className="blink">
+            Wrong email?{" "}
+            <span
+              onClick={() => {
+                setVerifyStep(false);
+                setError("");
+                setVerifyMsg("");
+              }}
+            >
+              Go Back
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Registration form ────────────────────────────────────────────────────
   return (
     <div id="signup" className={`screen ${isActive ? "active" : ""}`}>
       <div className="auth-wrap">
@@ -213,6 +401,9 @@ function firebaseErrorMessage(code) {
       return "Too many attempts. Try again later.";
     case "auth/popup-blocked":
       return "Popup blocked by browser. Please allow popups.";
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+      return "Incorrect password.";
     default:
       return "Registration failed. Please try again.";
   }

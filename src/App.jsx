@@ -88,12 +88,23 @@ export default function App() {
   // --- Firebase auth state listener ---
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
+      // Block email/password users who haven't verified their email
+      if (
+        user &&
+        !user.emailVerified &&
+        user.providerData[0]?.providerId === "password"
+      ) {
+        auth.signOut();
+        setCurrentUser(null);
+        localStorage.removeItem("sp_current");
+        setAuthReady(true);
+        return;
+      }
       if (user) {
         const displayName = user.displayName || user.email.split("@")[0];
         setCurrentUser(displayName);
         localStorage.setItem("sp_current", displayName);
         setAuthReady(true);
-        // Navigate away from splash once we know the user is logged in
         setCurrentScreen((prev) => {
           if (prev === "splash") {
             checkResetAndStreak();

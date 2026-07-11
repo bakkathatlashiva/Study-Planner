@@ -2064,3 +2064,16 @@ body {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+
+/* ===== HIDE VERCEL INJECTED TOOLBAR ===== */
+vercel-live-feedback,
+#vercel-live-feedback,
+.vercel-live-feedback,
+.__vercel_toolbar,
+.vercel-toolbar-root,
+#vercel-toolbar {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

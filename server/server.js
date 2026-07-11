@@ -179,6 +179,9 @@ const callGemini = async (system, text, maxTokens = 800) => {
       }),
     },
   );
+  if (response.status === 429) {
+    throw new Error("RATE_LIMITED");
+  }
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Gemini API ${response.status}: ${errText}`);
@@ -395,6 +398,14 @@ app.post("/api/chat", async (req, res) => {
     return res.json({ content: [{ text: answer }], source: "gemini" });
   } catch (err) {
     console.error("Gemini error:", err.message);
+    if (err.message === "RATE_LIMITED") {
+      return res
+        .status(429)
+        .json({
+          error:
+            "Gemini API rate limit reached. Please wait a moment and try again.",
+        });
+    }
     return res.status(500).json({ error: "Failed to contact Gemini API." });
   }
 });

@@ -416,7 +416,7 @@ app.post("/api/chat", async (req, res) => {
             "Gemini API rate limit reached. Please wait a moment and try again.",
         });
     }
-    return res.status(500).json({ error: "Failed to contact Gemini API." });
+    return res.status(500).json({ error: `Failed to contact Gemini API: ${err.message}` });
   }
 });
 

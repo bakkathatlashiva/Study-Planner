@@ -55,9 +55,8 @@ export default function Login({
       localStorage.setItem("sp_current", displayName);
       initApp();
     } catch (err) {
-      if (err.code !== "auth/popup-closed-by-user") {
-        setError(`❌ ${firebaseErrorMessage(err.code)}`);
-      }
+      const msg = firebaseErrorMessage(err.code);
+      if (msg) setError(`❌ ${msg}`);
     } finally {
       setGoogleLoading(false);
     }
@@ -188,7 +187,14 @@ function firebaseErrorMessage(code) {
       return "This account has been disabled.";
     case "auth/popup-blocked":
       return "Popup blocked by browser. Please allow popups.";
+    case "auth/unauthorized-domain":
+      return "This domain is not authorized in Firebase. Add it in Firebase Console → Authentication → Settings → Authorized domains.";
+    case "auth/operation-not-allowed":
+      return "Google sign-in is not enabled. Enable it in Firebase Console.";
+    case "auth/cancelled-popup-request":
+    case "auth/popup-closed-by-user":
+      return ""; // silent
     default:
-      return "Login failed. Please try again.";
+      return `Login failed (${code}). Please try again.`;
   }
 }

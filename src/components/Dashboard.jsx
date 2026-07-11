@@ -102,13 +102,18 @@ export default function Dashboard({
     localStorage.setItem("sp_tasks", JSON.stringify(updated));
   };
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   const resetTasks = () => {
-    if (confirm("Reset all tasks for today?")) {
-      const updated = tasks.map((t) => ({ ...t, done: false }));
-      setTasks(updated);
-      localStorage.setItem("sp_tasks", JSON.stringify(updated));
-      showToast("🔄 All tasks reset!", "#2b4fcc");
-    }
+    setShowResetConfirm(true);
+  };
+
+  const confirmReset = () => {
+    const updated = tasks.map((t) => ({ ...t, done: false }));
+    setTasks(updated);
+    localStorage.setItem("sp_tasks", JSON.stringify(updated));
+    showToast("🔄 All tasks reset!", "#2b4fcc");
+    setShowResetConfirm(false);
   };
 
   const [showExamForm, setShowExamForm] = useState(false);
@@ -184,6 +189,88 @@ export default function Dashboard({
 
   return (
     <div id="dashboard" className={`screen ${isActive ? "active" : ""}`}>
+      {/* Custom Reset Confirmation Dialog */}
+      {showResetConfirm && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              background: "#1a2240",
+              borderRadius: "16px",
+              padding: "28px 24px",
+              width: "280px",
+              textAlign: "center",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ fontSize: "2rem", marginBottom: "8px" }}>🔄</div>
+            <div
+              style={{
+                fontWeight: 700,
+                fontSize: "1rem",
+                color: "#fff",
+                marginBottom: "8px",
+              }}
+            >
+              Reset All Tasks?
+            </div>
+            <div
+              style={{
+                fontSize: "0.8rem",
+                color: "#8899cc",
+                marginBottom: "20px",
+              }}
+            >
+              This will mark all today's tasks as incomplete.
+            </div>
+            <div
+              style={{ display: "flex", gap: "10px", justifyContent: "center" }}
+            >
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: "1px solid #2a3558",
+                  background: "transparent",
+                  color: "#8899cc",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReset}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "#2b4fcc",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                Yes, Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="dash-top">
         <div className="dash-title">Hi {currentUser || "Student"}! 👋</div>
         <div className="dash-sub">Let's Plan Your Day</div>

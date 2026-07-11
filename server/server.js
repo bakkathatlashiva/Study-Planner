@@ -65,17 +65,32 @@ const connectValkey = () => {
     console.warn("⚠️  VALKEY_URL not set — exact-match cache disabled.");
     return;
   }
-  valkey = new Redis(url, {
-    maxRetriesPerRequest: 2,
-    enableOfflineQueue: false,
-    lazyConnect: true,
-  });
-  valkey.connect().catch((err) => {
-    console.error("Valkey connection error:", err.message);
+
+  // Upstash requires TLS — ensure rediss:// protocol
+  const tlsUrl = url.replace(/^redis:\/\//, "rediss://");
+
+  try {
+    valkey = new Redis(tlsUrl, {
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      connectTimeout: 5000,
+      tls: { rejectUnauthorized: false }, // required for Upstash self-signed
+    });
+    valkey.on("ready", () => console.log("✅ Valkey connected"));
+    valkey.on("error", (err) => {
+      console.error("Valkey error:", err.message);
+      // Disable cache on repeated failures to avoid log spam
+      if (
+        err.message.includes("ECONNREFUSED") ||
+        err.message.includes("EINVAL")
+      ) {
+        valkey = null;
+      }
+    });
+  } catch (err) {
+    console.error("Valkey init error:", err.message);
     valkey = null;
-  });
-  valkey.on("ready", () => console.log("✅ Valkey connected"));
-  valkey.on("error", (err) => console.error("Valkey error:", err.message));
+  }
 };
 connectValkey();
 

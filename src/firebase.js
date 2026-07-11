@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -20,3 +20,4 @@ isSupported().then((yes) => {
 });
 
 export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();

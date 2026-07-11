@@ -18,7 +18,7 @@ app.use(express.json());
 
 // ─── MongoDB ──────────────────────────────────────────────────────────────────
 mongoose
-  .connect(MONGODB_URI)
+  .connect(MONGODB_URI, { bufferCommands: false })
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
@@ -66,16 +66,20 @@ const connectValkey = () => {
     return;
   }
 
-  // Upstash requires TLS — ensure rediss:// protocol
-  const tlsUrl = url.replace(/^redis:\/\//, "rediss://");
+  // Only require TLS for remote hosts (e.g. Upstash)
+  const isLocal = url.includes("localhost") || url.includes("127.0.0.1");
+  const finalUrl = isLocal ? url : url.replace(/^redis:\/\//, "rediss://");
+  const redisOptions = {
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    connectTimeout: 5000,
+  };
+  if (!isLocal) {
+    redisOptions.tls = { rejectUnauthorized: false };
+  }
 
   try {
-    valkey = new Redis(tlsUrl, {
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-      connectTimeout: 5000,
-      tls: { rejectUnauthorized: false }, // required for Upstash self-signed
-    });
+    valkey = new Redis(finalUrl, redisOptions);
     valkey.on("ready", () => console.log("✅ Valkey connected"));
     valkey.on("error", (err) => {
       console.error("Valkey error:", err.message);
@@ -97,16 +101,17 @@ connectValkey();
 const CACHE_TTL = 60 * 60 * 24 * 7; // 7 days in seconds
 
 // ─── Embedding helpers ────────────────────────────────────────────────────────
-// Uses Gemini text-embedding-004 (768 dimensions, free tier)
+// Uses Gemini gemini-embedding-2 (768 dimensions, free tier)
 const getEmbedding = async (text) => {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=${GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "models/text-embedding-004",
+        model: "models/gemini-embedding-2",
         content: { parts: [{ text }] },
+        outputDimensionality: 768,
       }),
     },
   );
@@ -164,7 +169,7 @@ const vectorSearch = async (queryEmbedding, mode) => {
 // ─── Gemini text generation ───────────────────────────────────────────────────
 const callGemini = async (system, text, maxTokens = 800) => {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -175,7 +180,12 @@ const callGemini = async (system, text, maxTokens = 800) => {
             parts: [{ text: `${system}\n\nUser Input: ${text}` }],
           },
         ],
-        generationConfig: { maxOutputTokens: maxTokens },
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          thinkingConfig: {
+            thinkingBudget: 0,
+          },
+        },
       }),
     },
   );

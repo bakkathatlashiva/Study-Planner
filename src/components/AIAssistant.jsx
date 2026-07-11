@@ -1,9 +1,15 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { callClaude } from "../utils/api";
 
 export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
   const [aiMode, setAiMode] = useState("explain");
   const [aiInput, setAiInput] = useState("");
+  const chatEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
   const [aiChat, setAiChat] = useState([
     {
       role: "bot",
@@ -11,6 +17,16 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
       loading: false,
     },
   ]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [aiChat]);
+
+  useEffect(() => {
+    if (isActive) {
+      setTimeout(scrollToBottom, 50);
+    }
+  }, [isActive]);
 
   const handleSendAIChat = async () => {
     const text = aiInput.trim();
@@ -56,7 +72,7 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
     } catch (err) {
       const msg = err.message?.includes("rate limit")
         ? "⚠️ Too many requests. Please wait a moment and try again."
-        : "⚠️ Connection error. Make sure the backend server is running.";
+        : `⚠️ Error: ${err.message || "Make sure the backend server is running."}`;
       setAiChat((prev) => {
         const withoutLoader = prev.filter((m) => !m.loading);
         return [...withoutLoader, { role: "bot", text: msg }];
@@ -91,6 +107,7 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
             )}
           </div>
         ))}
+        <div ref={chatEndRef} />
       </div>
       <div className="ai-input-wrap">
         <div className="mode-chips">

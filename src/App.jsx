@@ -18,10 +18,11 @@ import ResumeBuilder from "./components/ResumeBuilder";
 import Sidebar from "./components/Sidebar";
 
 // LocalStorage helpers
-const SV = (k, v) => localStorage.setItem(k, JSON.stringify(v));
-const GV = (k, d) => {
+const getScopedKey = (k, user) => user ? `${k}_${user}` : k;
+const SV = (k, v, user) => localStorage.setItem(getScopedKey(k, user), JSON.stringify(v));
+const GV = (k, d, user) => {
   try {
-    const val = localStorage.getItem(k);
+    const val = localStorage.getItem(getScopedKey(k, user));
     return val ? JSON.parse(val) : d;
   } catch {
     return d;
@@ -60,12 +61,12 @@ export default function App() {
         end: "4:00 PM",
         done: false,
       },
-    ]),
+    ], localStorage.getItem("sp_current"))
   );
-  const [notes, setNotes] = useState(() => GV("sp_notes", []));
-  const [exams, setExams] = useState(() => GV("sp_exams", []));
-  const [subjects, setSubjects] = useState(() => GV("sp_subjects", []));
-  const [plans, setPlans] = useState(() => GV("sp_plans", []));
+  const [notes, setNotes] = useState(() => GV("sp_notes", [], localStorage.getItem("sp_current")));
+  const [exams, setExams] = useState(() => GV("sp_exams", [], localStorage.getItem("sp_current")));
+  const [subjects, setSubjects] = useState(() => GV("sp_subjects", [], localStorage.getItem("sp_current")));
+  const [plans, setPlans] = useState(() => GV("sp_plans", [], localStorage.getItem("sp_current")));
   const [gameData, setGameData] = useState(() =>
     GV("sp_game", {
       xp: 0,
@@ -74,7 +75,7 @@ export default function App() {
       lastStudy: "",
       testScores: [],
       testsTaken: 0,
-    }),
+    }, localStorage.getItem("sp_current"))
   );
 
   // --- Toast, Alarms ---
@@ -146,10 +147,48 @@ export default function App() {
     };
   }, [currentUser, tasks]);
 
+  // --- Auto-persist State Changes to Scoped LocalStorage ---
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_tasks", tasks, currentUser);
+    }
+  }, [tasks, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_notes", notes, currentUser);
+    }
+  }, [notes, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_exams", exams, currentUser);
+    }
+  }, [exams, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_subjects", subjects, currentUser);
+    }
+  }, [subjects, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_plans", plans, currentUser);
+    }
+  }, [plans, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) {
+      SV("sp_game", gameData, currentUser);
+    }
+  }, [gameData, currentUser]);
+
   // --- App Initialization state checks ---
   const initApp = () => {
     checkResetAndStreak();
-    setCurrentScreen("dashboard");
+    // Reload page to re-initialize all user-scoped states from localStorage
+    window.location.reload();
   };
 
   const checkResetAndStreak = () => {
@@ -160,7 +199,7 @@ export default function App() {
     if (storedReset !== today) {
       const updatedTasks = tasks.map((t) => ({ ...t, done: false }));
       setTasks(updatedTasks);
-      SV("sp_tasks", updatedTasks);
+      SV("sp_tasks", updatedTasks, currentUser);
       localStorage.setItem("sp_reset", today);
 
       // Update Streak
@@ -173,7 +212,7 @@ export default function App() {
           updated.streak = 1;
         }
         updated.lastStudy = today;
-        SV("sp_game", updated);
+        SV("sp_game", updated, currentUser);
         return updated;
       });
     } else {
@@ -184,11 +223,11 @@ export default function App() {
         if (prev.lastStudy === yesterday) {
           updated.streak++;
           updated.lastStudy = today;
-          SV("sp_game", updated);
+          SV("sp_game", updated, currentUser);
         } else if (prev.lastStudy === "") {
           updated.streak = 1;
           updated.lastStudy = today;
-          SV("sp_game", updated);
+          SV("sp_game", updated, currentUser);
         }
         return updated;
       });
@@ -205,7 +244,7 @@ export default function App() {
         showToast(`🏆 Level Up! You're now Level ${level}!`, "#f0a500");
       }
       const updated = { ...prev, xp: updatedXp };
-      SV("sp_game", updated);
+      SV("sp_game", updated, currentUser);
       return updated;
     });
   };
@@ -303,7 +342,8 @@ export default function App() {
     await signOut(auth);
     setCurrentUser(null);
     localStorage.removeItem("sp_current");
-    setCurrentScreen("login");
+    // Clear session-level temporary state by reloading to root
+    window.location.href = "/";
   };
 
   const isMainScreen = !["splash", "login", "signup", "forgot"].includes(

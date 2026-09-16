@@ -2,6 +2,7 @@ const express = require("express");
 const { OAuth2Client } = require("google-auth-library");
 const jwt = require("jsonwebtoken");
 const { sendEmail } = require("./email");
+const { googleRedirectUri, missingGoogleConfig } = require("./google-config");
 const {
   authenticate,
   bcrypt,
@@ -13,7 +14,6 @@ const {
 } = require("./auth");
 
 const router = express.Router();
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
@@ -32,19 +32,12 @@ const googleClient = () =>
   new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI,
+    googleRedirectUri,
   );
 
 const googleConfigError = () => {
-  const missing = [
-    ["GOOGLE_CLIENT_ID", process.env.GOOGLE_CLIENT_ID],
-    ["GOOGLE_CLIENT_SECRET", process.env.GOOGLE_CLIENT_SECRET],
-    ["GOOGLE_REDIRECT_URI", GOOGLE_REDIRECT_URI],
-  ]
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-  return missing.length
-    ? `Google OAuth is missing: ${missing.join(", ")}`
+  return missingGoogleConfig.length
+    ? `Google OAuth is missing: ${missingGoogleConfig.join(", ")}`
     : null;
 };
 
@@ -181,7 +174,7 @@ router.get("/google", (_req, res) => {
     access_type: "offline",
     scope: ["openid", "email", "profile"],
     prompt: "select_account",
-    redirect_uri: GOOGLE_REDIRECT_URI,
+    redirect_uri: googleRedirectUri,
     state: jwt.sign(
       { nonce: require("crypto").randomBytes(16).toString("hex") },
       process.env.JWT_SECRET,
@@ -199,7 +192,7 @@ router.get("/google/callback", async (req, res, next) => {
     const client = googleClient();
     const { tokens } = await client.getToken({
       code: String(req.query.code || ""),
-      redirect_uri: GOOGLE_REDIRECT_URI,
+      redirect_uri: googleRedirectUri,
     });
     const ticket = await client.verifyIdToken({
       idToken: tokens.id_token,

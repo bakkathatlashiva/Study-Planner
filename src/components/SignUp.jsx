@@ -114,6 +114,12 @@ export default function SignUp({
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
           scope: "openid email profile",
+          error_callback: (err) => {
+            setGoogleLoading(false);
+            if (err?.type !== "popup_closed") {
+              setError(`❌ Google sign in: ${err?.message || "Popup closed"}`);
+            }
+          },
           callback: async (tokenResponse) => {
             if (tokenResponse.error) {
               setGoogleLoading(false);
@@ -143,6 +149,7 @@ export default function SignUp({
         return;
       } catch (gisErr) {
         console.warn("GIS token client error:", gisErr);
+        setGoogleLoading(false);
       }
     }
 

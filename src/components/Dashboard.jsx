@@ -31,10 +31,10 @@ export default function Dashboard({
   exams,
   setExams,
   gameData,
-  setGameData,
+  _setGameData,
   addXP,
   showToast,
-  setCurrentScreen,
+  _setCurrentScreen,
 }) {
   const [newTaskText, setNewTaskText] = useState("");
   const [sh, setSh] = useState("");

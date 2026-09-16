@@ -58,7 +58,10 @@ export default function PlacementPrep({
         1000
       );
       const data = await resp.json();
-      const replyHtml = data.content[0].text
+      if (!resp.ok) throw new Error(data.error || 'Failed to get placement help');
+      const text = data.content?.[0]?.text;
+      if (!text) throw new Error('No content returned');
+      const replyHtml = text
         .replace(/\n/g, '<br>')
         .replace(/## /g, '<br><b style="color:#4caf50;font-size:0.85rem">')
         .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
@@ -80,6 +83,17 @@ export default function PlacementPrep({
   return (
     <div id="placement-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div style={{ padding: '44px 22px 14px' }}>
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to career hub"
+            onClick={() => setCurrentScreen("career-screen")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">💼 Placement Prep</div>
         <div className="ai-sub">DSA, Aptitude & Interview preparation</div>
       </div>

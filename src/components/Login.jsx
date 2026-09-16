@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { googleLoginUrl, login, saveSession } from "../utils/api";
+import { googleLoginUrl, login, saveSession, verifyGoogleToken } from "../utils/api";
 
 export default function Login({
   isActive,
@@ -38,9 +38,53 @@ export default function Login({
   };
 
   const handleGoogle = async () => {
+    setError("");
     setGoogleLoading(true);
+
+    const clientId =
+      import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+      "262381768373-b53deis1h3ji7p60n0cab3hpcgqts5p6.apps.googleusercontent.com";
+
+    if (window.google?.accounts?.oauth2 && clientId) {
+      try {
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: "openid email profile",
+          callback: async (tokenResponse) => {
+            if (tokenResponse.error) {
+              setGoogleLoading(false);
+              if (tokenResponse.error !== "popup_closed_by_user") {
+                setError(`❌ Google sign in: ${tokenResponse.error}`);
+              }
+              return;
+            }
+            try {
+              const resp = await verifyGoogleToken({
+                accessToken: tokenResponse.access_token,
+              });
+              const data = await resp.json();
+              if (!resp.ok)
+                throw new Error(data.error || "Unable to sign in with Google.");
+              saveSession(data);
+              setCurrentUser(data.user.name);
+              initApp();
+            } catch (err) {
+              setError(`❌ ${err.message || "Google authentication failed."}`);
+            } finally {
+              setGoogleLoading(false);
+            }
+          },
+        });
+        tokenClient.requestAccessToken({ prompt: "select_account" });
+        return;
+      } catch (gisErr) {
+        console.warn("GIS token client error:", gisErr);
+      }
+    }
+
     window.location.href = googleLoginUrl;
   };
+
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter") handleLogin();

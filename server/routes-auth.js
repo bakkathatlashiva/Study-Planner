@@ -227,7 +227,66 @@ router.get("/google/callback", async (req, res, next) => {
   }
 });
 
+router.post("/google/verify", async (req, res, next) => {
+  try {
+    const configError = googleConfigError();
+    if (configError) return res.status(503).json({ error: configError });
+    const { idToken, accessToken } = req.body;
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ error: "Missing authentication token." });
+    }
+
+    let profile = null;
+    if (idToken) {
+      const client = googleClient();
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      profile = ticket.getPayload();
+    } else if (accessToken) {
+      const resp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!resp.ok) {
+        return res.status(401).json({ error: "Invalid Google access token." });
+      }
+      profile = await resp.json();
+    }
+
+    if (!profile?.email) {
+      return res.status(403).json({ error: "Could not retrieve email from Google." });
+    }
+    if (profile.email_verified === false) {
+      return res.status(403).json({ error: "Google account email is not verified." });
+    }
+
+    const email = profile.email.toLowerCase();
+    const existing = await query(
+      "SELECT id, name, email FROM users WHERE email = $1",
+      [email],
+    );
+    let user = existing.rows[0];
+    if (!user) {
+      const created = await query(
+        `INSERT INTO users (name, email, email_verified_at, provider)
+         VALUES ($1, $2, NOW(), 'google') RETURNING id, name, email`,
+        [
+          profile.name || profile.email.split("@")[0],
+          email,
+        ],
+      );
+      user = created.rows[0];
+    }
+    const session = await issueSession(user);
+    return res.json(session);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/refresh", async (req, res, next) => {
+
   const refreshToken = String(req.body.refreshToken || "");
   if (!refreshToken)
     return res.status(401).json({ error: "Refresh token required." });

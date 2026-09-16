@@ -100,7 +100,7 @@ export default function Sidebar({
                 x2="62"
                 y2="35"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <line
                 x1="62"
@@ -108,7 +108,7 @@ export default function Sidebar({
                 x2="68"
                 y2="28"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <circle cx="72" cy="26" r="4" fill="white" />
               <line
@@ -117,7 +117,7 @@ export default function Sidebar({
                 x2="70"
                 y2="47"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <circle cx="75" cy="47" r="4" fill="white" />
               <line
@@ -126,7 +126,7 @@ export default function Sidebar({
                 x2="62"
                 y2="58"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <line
                 x1="62"
@@ -134,7 +134,7 @@ export default function Sidebar({
                 x2="70"
                 y2="65"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <circle cx="74" cy="67" r="4" fill="white" />
               <line
@@ -143,7 +143,7 @@ export default function Sidebar({
                 x2="65"
                 y2="72"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <line
                 x1="65"
@@ -151,7 +151,7 @@ export default function Sidebar({
                 x2="65"
                 y2="80"
                 stroke="white"
-                stroke-width="2"
+                strokeWidth="2"
               />
               <circle cx="65" cy="84" r="4" fill="white" />
             </svg>

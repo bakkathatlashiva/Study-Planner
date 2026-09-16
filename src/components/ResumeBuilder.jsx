@@ -54,7 +54,10 @@ Make it ATS-friendly and professional.`,
         1200
       );
       const data = await resp.json();
-      const replyHtml = data.content[0].text
+      if (!resp.ok) throw new Error(data.error || 'Failed to build resume');
+      const text = data.content?.[0]?.text;
+      if (!text) throw new Error('No content returned');
+      const replyHtml = text
         .replace(/\n/g, '<br>')
         .replace(/## /g, '<br><b style="color:#e06b8b;font-size:0.85rem">')
         .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
@@ -78,6 +81,17 @@ Make it ATS-friendly and professional.`,
   return (
     <div id="resume-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div style={{ padding: '44px 22px 14px' }}>
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to career hub"
+            onClick={() => setCurrentScreen("career-screen")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">📄 Resume Builder</div>
         <div className="ai-sub">AI builds ATS-friendly resume content</div>
       </div>

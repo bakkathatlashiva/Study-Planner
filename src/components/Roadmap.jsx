@@ -52,7 +52,10 @@ Keep it practical for Indian engineering students targeting top companies.`,
         1200
       );
       const data = await resp.json();
-      const replyHtml = data.content[0].text
+      if (!resp.ok) throw new Error(data.error || 'Failed to generate roadmap');
+      const text = data.content?.[0]?.text;
+      if (!text) throw new Error('No content returned');
+      const replyHtml = text
         .replace(/\n/g, '<br>')
         .replace(/## /g, '<br><b style="color:#5b8dee">')
         .replace(/<b style="color:#5b8dee">/g, '<br><b style="color:#5b8dee;font-size:0.85rem">')
@@ -76,6 +79,17 @@ Keep it practical for Indian engineering students targeting top companies.`,
   return (
     <div id="roadmap-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div style={{ padding: '44px 22px 14px' }}>
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to career hub"
+            onClick={() => setCurrentScreen("career-screen")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">🗺 Career Roadmap</div>
         <div className="ai-sub">AI creates your personalized career path</div>
       </div>

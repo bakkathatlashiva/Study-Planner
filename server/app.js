@@ -4,6 +4,8 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const Redis = require("ioredis");
 const webpush = require("web-push");
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 require("dotenv").config();
 
 const { query } = require("./db");
@@ -164,13 +166,23 @@ app.post("/api/chat", authenticate, async (req, res, next) => {
   const mode = extractMode(system);
   const cacheKey = `ai:${mode}:${text.toLowerCase()}`;
   try {
-    if (redis) {
-      const cached = await redis.get(cacheKey);
-      if (cached)
-        return res.json({ content: [{ text: cached }], source: "cache" });
+    if (redis && redis.status === "ready") {
+      try {
+        const cached = await redis.get(cacheKey);
+        if (cached)
+          return res.json({ content: [{ text: cached }], source: "cache" });
+      } catch (cacheErr) {
+        console.warn("Redis cache get error:", cacheErr.message);
+      }
     }
     const answer = await callGemini(system, text, maxTokens);
-    if (redis) await redis.set(cacheKey, answer, "EX", CACHE_TTL);
+    if (redis && redis.status === "ready") {
+      try {
+        await redis.set(cacheKey, answer, "EX", CACHE_TTL);
+      } catch (cacheErr) {
+        console.warn("Redis cache set error:", cacheErr.message);
+      }
+    }
     if (req.user?.sub) {
       const existing = await query(
         "SELECT id FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
@@ -283,8 +295,11 @@ app.delete("/api/notifications/:id", authenticate, async (req, res, next) => {
 
 const sendDueReminders = async () => {
   const lockKey = "study-planner:reminders:lock";
-  if (redis && !(await redis.set(lockKey, process.pid, "EX", 50, "NX"))) return;
   try {
+    if (redis && redis.status === "ready") {
+      const acquired = await redis.set(lockKey, process.pid, "EX", 50, "NX");
+      if (!acquired) return;
+    }
     const due = await query(
       `SELECT id, user_id, title, starts_at, 'study_session' AS type
        FROM study_sessions

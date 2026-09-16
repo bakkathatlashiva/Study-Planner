@@ -36,6 +36,17 @@ export default function Notes({
   return (
     <div id="notes-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div className="notes-top">
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to dashboard"
+            onClick={() => setCurrentScreen("dashboard")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">📝 My Notes</div>
         <div className="ai-sub">Write and organize your study notes</div>
       </div>

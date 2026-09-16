@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   clearSession,
   logout,
@@ -131,6 +131,95 @@ export default function App() {
   });
   const [alarmPop, setAlarmPop] = useState(null); // Name of the active alarm to display
 
+  // --- Show Toast Notification ---
+  const showToast = useCallback((msg, color) => {
+    setToast({ message: msg, color: color || "#2b4fcc", visible: true });
+    setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 4000);
+  }, []);
+
+  // --- Browser Notifications & Audio Beeps ---
+  const askNotif = useCallback(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const sendNotif = useCallback((title, body) => {
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(title, { body, requireInteraction: true });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, []);
+
+  const playBeep = useCallback(() => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.5, 1].forEach((d) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.frequency.value = 880;
+        g.gain.setValueAtTime(0.4, ctx.currentTime + d);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.4);
+        o.start(ctx.currentTime + d);
+        o.stop(ctx.currentTime + d + 0.4);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // --- Alarm Timers Helper ---
+  const parseTime = useCallback((str) => {
+    if (!str || str === "--") return null;
+    const m = str.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!m) return null;
+    let h = parseInt(m[1]);
+    const min = parseInt(m[2]);
+    const ap = m[3].toUpperCase();
+    if (ap === "PM" && h !== 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    return { h, min };
+  }, []);
+
+  const checkAlarms = useCallback(() => {
+    const n = new Date();
+    const ch = n.getHours();
+    const cm = n.getMinutes();
+    tasks.forEach((t) => {
+      if (t.done) return;
+      const time = parseTime(t.start);
+      if (!time) return;
+      let rh = time.h;
+      let rm = time.min - 5;
+      if (rm < 0) {
+        rm += 60;
+        rh--;
+      }
+      if (rh === ch && rm === cm) {
+        showToast(`⏰ 5 minutes until "${t.text}"!`, "#f0a500");
+        sendNotif(
+          "⏰ 5 Min Reminder!",
+          `${t.text} starts in 5 minutes! Get ready 💪`,
+        );
+      }
+      if (time.h === ch && time.min === cm) {
+        playBeep();
+        setAlarmPop(t.text);
+        sendNotif(
+          "🔔 Study Time!",
+          `Time to study ${t.text}! Complete the task! 💪`,
+        );
+      }
+    });
+  }, [tasks, parseTime, showToast, sendNotif, playBeep]);
+
   // --- Restore the local JWT session ---
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +300,7 @@ export default function App() {
       });
     }, 2200);
     return () => clearTimeout(timer);
-  }, [authReady]);
+  }, [authReady, askNotif]);
 
   useEffect(() => {
     const publicScreens = ["splash", "login", "signup", "forgot"];
@@ -240,7 +329,7 @@ export default function App() {
     return () => {
       if (alarmTimer) clearInterval(alarmTimer);
     };
-  }, [currentUser, tasks]);
+  }, [currentUser, checkAlarms]);
 
   // --- Auto-persist State Changes to Scoped LocalStorage ---
   useEffect(() => {
@@ -345,94 +434,6 @@ export default function App() {
     });
   };
 
-  // --- Show Toast Notification ---
-  const showToast = (msg, color) => {
-    setToast({ message: msg, color: color || "#2b4fcc", visible: true });
-    setTimeout(() => {
-      setToast((prev) => ({ ...prev, visible: false }));
-    }, 4000);
-  };
-
-  // --- Browser Notifications & Audio Beeps ---
-  const askNotif = () => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  };
-
-  const sendNotif = (title, body) => {
-    if ("Notification" in window && Notification.permission === "granted") {
-      try {
-        new Notification(title, { body, requireInteraction: true });
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  };
-
-  const playBeep = () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [0, 0.5, 1].forEach((d) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.connect(g);
-        g.connect(ctx.destination);
-        o.frequency.value = 880;
-        g.gain.setValueAtTime(0.4, ctx.currentTime + d);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.4);
-        o.start(ctx.currentTime + d);
-        o.stop(ctx.currentTime + d + 0.4);
-      });
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // --- Alarm Timers Helper ---
-  const parseTime = (str) => {
-    if (!str || str === "--") return null;
-    const m = str.match(/(\d+):(\d+)\s*(AM|PM)/i);
-    if (!m) return null;
-    let h = parseInt(m[1]);
-    const min = parseInt(m[2]);
-    const ap = m[3].toUpperCase();
-    if (ap === "PM" && h !== 12) h += 12;
-    if (ap === "AM" && h === 12) h = 0;
-    return { h, min };
-  };
-
-  const checkAlarms = () => {
-    const n = new Date();
-    const ch = n.getHours();
-    const cm = n.getMinutes();
-    tasks.forEach((t) => {
-      if (t.done) return;
-      const time = parseTime(t.start);
-      if (!time) return;
-      let rh = time.h;
-      let rm = time.min - 5;
-      if (rm < 0) {
-        rm += 60;
-        rh--;
-      }
-      if (rh === ch && rm === cm) {
-        showToast(`⏰ 5 minutes until "${t.text}"!`, "#f0a500");
-        sendNotif(
-          "⏰ 5 Min Reminder!",
-          `${t.text} starts in 5 minutes! Get ready 💪`,
-        );
-      }
-      if (time.h === ch && time.min === cm) {
-        playBeep();
-        setAlarmPop(t.text);
-        sendNotif(
-          "🔔 Study Time!",
-          `Time to study ${t.text}! Complete the task! 💪`,
-        );
-      }
-    });
-  };
 
   const handleLogout = async () => {
     await logout().catch(() => {});

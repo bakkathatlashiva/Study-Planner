@@ -8,7 +8,7 @@ export default function MockTest({
   showToast,
   subjects,
   setSubjects,
-  gameData,
+  _gameData,
   setGameData
 }) {
   const [newSubjectName, setNewSubjectName] = useState('');
@@ -90,8 +90,14 @@ Return ONLY this JSON:
         2000
       );
       const data = await resp.json();
-      const clean = data.content[0].text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
+      if (!resp.ok) throw new Error(data.error || 'Failed to generate test');
+      const text = data.content?.[0]?.text || '';
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('Invalid JSON format');
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+        throw new Error('No questions returned');
+      }
       setCurTest(prev => ({
         ...prev,
         questions: parsed.questions,
@@ -168,9 +174,12 @@ Return ONLY this JSON:
         4000
       );
       const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to get doubt answer');
+      const reply = data.content?.[0]?.text;
+      if (!reply) throw new Error('No reply received');
       setCurTest(prev => ({
         ...prev,
-        doubtAnswer: data.content[0].text,
+        doubtAnswer: reply,
         doubtLoading: false
       }));
     } catch {
@@ -221,6 +230,17 @@ Return ONLY this JSON:
     <>
       <div id="test-screen" className={`screen ${isActive ? 'active' : ''}`}>
         <div className="test-top">
+          {setCurrentScreen && (
+            <button
+              className="ai-icon-btn"
+              type="button"
+              aria-label="Back to dashboard"
+              onClick={() => setCurrentScreen("dashboard")}
+              style={{ marginBottom: "8px" }}
+            >
+              ←
+            </button>
+          )}
           <div className="ai-title">🧪 Mock Test</div>
           <div className="ai-sub">AI-powered tests from your syllabus</div>
         </div>

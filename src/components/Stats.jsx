@@ -89,6 +89,17 @@ export default function Stats({
   return (
     <div id="stats-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div className="stats-top">
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to dashboard"
+            onClick={() => setCurrentScreen("dashboard")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">📈 My Stats</div>
         <div className="ai-sub">Track your study performance</div>
       </div>

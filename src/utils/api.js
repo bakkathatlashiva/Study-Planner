@@ -147,3 +147,10 @@ export const savePushSubscription = (subscription) =>
     method: "POST",
     body: JSON.stringify({ subscription }),
   });
+
+export const verifyGoogleToken = ({ idToken, accessToken }) =>
+  request("/api/auth/google/verify", {
+    method: "POST",
+    body: JSON.stringify({ idToken, accessToken }),
+  });
+

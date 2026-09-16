@@ -59,8 +59,14 @@ Return ONLY this JSON:
         1500
       );
       const data = await resp.json();
-      const clean = data.content[0].text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
+      if (!resp.ok) throw new Error(data.error || 'Failed to generate plan');
+      const text = data.content?.[0]?.text || '';
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('Invalid JSON format');
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(parsed.plan) || parsed.plan.length === 0) {
+        throw new Error('No plan days returned');
+      }
 
       // Build JSX template string
       let html = '';
@@ -162,6 +168,17 @@ Return ONLY this JSON:
   return (
     <div id="plan-screen" className={`screen ${isActive ? 'active' : ''}`}>
       <div className="plan-top">
+        {setCurrentScreen && (
+          <button
+            className="ai-icon-btn"
+            type="button"
+            aria-label="Back to dashboard"
+            onClick={() => setCurrentScreen("dashboard")}
+            style={{ marginBottom: "8px" }}
+          >
+            ←
+          </button>
+        )}
         <div className="ai-title">📅 Study Plan</div>
         <div className="ai-sub">AI generates your personalized timetable</div>
       </div>

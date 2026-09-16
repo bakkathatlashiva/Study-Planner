@@ -17,6 +17,17 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const API_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
 const CACHE_TTL = 60 * 60 * 24 * 7;
 
+const missingGoogleConfig = [
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_REDIRECT_URI",
+].filter((name) => !process.env[name]);
+if (missingGoogleConfig.length) {
+  console.error(
+    `Google OAuth disabled: missing ${missingGoogleConfig.join(", ")}`,
+  );
+}
+
 app.use(helmet());
 app.use(cors({ origin: API_ORIGIN, credentials: true }));
 app.use(express.json({ limit: "64kb" }));

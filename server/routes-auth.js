@@ -13,6 +13,7 @@ const {
 } = require("./auth");
 
 const router = express.Router();
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "";
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
@@ -31,8 +32,21 @@ const googleClient = () =>
   new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI,
+    GOOGLE_REDIRECT_URI,
   );
+
+const googleConfigError = () => {
+  const missing = [
+    ["GOOGLE_CLIENT_ID", process.env.GOOGLE_CLIENT_ID],
+    ["GOOGLE_CLIENT_SECRET", process.env.GOOGLE_CLIENT_SECRET],
+    ["GOOGLE_REDIRECT_URI", GOOGLE_REDIRECT_URI],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  return missing.length
+    ? `Google OAuth is missing: ${missing.join(", ")}`
+    : null;
+};
 
 router.post("/register", async (req, res, next) => {
   const name = String(req.body.name || "").trim();
@@ -161,15 +175,13 @@ router.post("/login", async (req, res, next) => {
 });
 
 router.get("/google", (_req, res) => {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return res
-      .status(503)
-      .send("Google sign-in is not configured on the server.");
-  }
+  const configError = googleConfigError();
+  if (configError) return res.status(503).send(configError);
   const url = googleClient().generateAuthUrl({
     access_type: "offline",
     scope: ["openid", "email", "profile"],
     prompt: "select_account",
+    redirect_uri: GOOGLE_REDIRECT_URI,
     state: jwt.sign(
       { nonce: require("crypto").randomBytes(16).toString("hex") },
       process.env.JWT_SECRET,
@@ -181,9 +193,14 @@ router.get("/google", (_req, res) => {
 
 router.get("/google/callback", async (req, res, next) => {
   try {
+    const configError = googleConfigError();
+    if (configError) return res.status(503).send(configError);
     jwt.verify(String(req.query.state || ""), process.env.JWT_SECRET);
     const client = googleClient();
-    const { tokens } = await client.getToken(String(req.query.code || ""));
+    const { tokens } = await client.getToken({
+      code: String(req.query.code || ""),
+      redirect_uri: GOOGLE_REDIRECT_URI,
+    });
     const ticket = await client.verifyIdToken({
       idToken: tokens.id_token,
       audience: process.env.GOOGLE_CLIENT_ID,

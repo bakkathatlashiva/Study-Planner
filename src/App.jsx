@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "./firebase";
+import {
+  clearSession,
+  logout,
+  restoreSession,
+  saveSession,
+  verifyEmail,
+} from "./utils/api";
 import Splash from "./components/Splash";
 import Login from "./components/Login";
 import SignUp from "./components/SignUp";
@@ -18,8 +23,9 @@ import ResumeBuilder from "./components/ResumeBuilder";
 import Sidebar from "./components/Sidebar";
 
 // LocalStorage helpers
-const getScopedKey = (k, user) => user ? `${k}_${user}` : k;
-const SV = (k, v, user) => localStorage.setItem(getScopedKey(k, user), JSON.stringify(v));
+const getScopedKey = (k, user) => (user ? `${k}_${user}` : k);
+const SV = (k, v, user) =>
+  localStorage.setItem(getScopedKey(k, user), JSON.stringify(v));
 const GV = (k, d, user) => {
   try {
     const val = localStorage.getItem(getScopedKey(k, user));
@@ -29,9 +35,32 @@ const GV = (k, d, user) => {
   }
 };
 
+const SCREEN_PATHS = {
+  dashboard: "/dashboard",
+  "ai-screen": "/ai-assistant",
+  "test-screen": "/mock-test",
+  "plan-screen": "/study-plan",
+  "notes-screen": "/notes",
+  "stats-screen": "/stats",
+  "career-screen": "/career",
+  "roadmap-screen": "/career/roadmap",
+  "placement-screen": "/career/placement",
+  "resume-screen": "/career/resume",
+  login: "/login",
+  signup: "/signup",
+  forgot: "/forgot-password",
+};
+
+const screenFromPath = (pathname) =>
+  Object.entries(SCREEN_PATHS).find(([, path]) => path === pathname)?.[0] ||
+  null;
+
+const initialScreenFromLocation = () =>
+  screenFromPath(window.location.pathname) || "splash";
+
 export default function App() {
   // --- Navigation & Auth ---
-  const [currentScreen, setCurrentScreen] = useState("splash");
+  const [currentScreen, setCurrentScreen] = useState(initialScreenFromLocation);
   const [currentUser, setCurrentUser] = useState(
     localStorage.getItem("sp_current") || null,
   );
@@ -39,43 +68,59 @@ export default function App() {
 
   // --- App Core Global State ---
   const [tasks, setTasks] = useState(() =>
-    GV("sp_tasks", [
-      {
-        id: 1,
-        text: "Mathematics",
-        start: "9:00 AM",
-        end: "11:00 AM",
-        done: false,
-      },
-      {
-        id: 2,
-        text: "Chemistry",
-        start: "11:15 AM",
-        end: "1:00 PM",
-        done: false,
-      },
-      {
-        id: 3,
-        text: "C Programming",
-        start: "2:00 PM",
-        end: "4:00 PM",
-        done: false,
-      },
-    ], localStorage.getItem("sp_current"))
+    GV(
+      "sp_tasks",
+      [
+        {
+          id: 1,
+          text: "Mathematics",
+          start: "9:00 AM",
+          end: "11:00 AM",
+          done: false,
+        },
+        {
+          id: 2,
+          text: "Chemistry",
+          start: "11:15 AM",
+          end: "1:00 PM",
+          done: false,
+        },
+        {
+          id: 3,
+          text: "C Programming",
+          start: "2:00 PM",
+          end: "4:00 PM",
+          done: false,
+        },
+      ],
+      localStorage.getItem("sp_current"),
+    ),
   );
-  const [notes, setNotes] = useState(() => GV("sp_notes", [], localStorage.getItem("sp_current")));
-  const [exams, setExams] = useState(() => GV("sp_exams", [], localStorage.getItem("sp_current")));
-  const [subjects, setSubjects] = useState(() => GV("sp_subjects", [], localStorage.getItem("sp_current")));
-  const [plans, setPlans] = useState(() => GV("sp_plans", [], localStorage.getItem("sp_current")));
+  const [notes, setNotes] = useState(() =>
+    GV("sp_notes", [], localStorage.getItem("sp_current")),
+  );
+  const [exams, setExams] = useState(() =>
+    GV("sp_exams", [], localStorage.getItem("sp_current")),
+  );
+  const [subjects, setSubjects] = useState(() =>
+    GV("sp_subjects", [], localStorage.getItem("sp_current")),
+  );
+  const [plans, setPlans] = useState(() =>
+    GV("sp_plans", [], localStorage.getItem("sp_current")),
+  );
   const [gameData, setGameData] = useState(() =>
-    GV("sp_game", {
-      xp: 0,
-      streak: 0,
-      badges: 0,
-      lastStudy: "",
-      testScores: [],
-      testsTaken: 0,
-    }, localStorage.getItem("sp_current"))
+    GV(
+      "sp_game",
+      {
+        xp: 0,
+        streak: 0,
+        badges: 0,
+        lastStudy: "",
+        testScores: [],
+        testsTaken: 0,
+      },
+      localStorage.getItem("sp_current"),
+    ),
   );
 
   // --- Toast, Alarms ---
@@ -86,40 +131,73 @@ export default function App() {
   });
   const [alarmPop, setAlarmPop] = useState(null); // Name of the active alarm to display
 
-  // --- Firebase auth state listener ---
+  // --- Restore the local JWT session ---
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      // Block email/password users who haven't verified their email
-      if (
-        user &&
-        !user.emailVerified &&
-        user.providerData[0]?.providerId === "password"
-      ) {
-        auth.signOut();
-        setCurrentUser(null);
-        localStorage.removeItem("sp_current");
-        setAuthReady(true);
-        return;
+    let cancelled = false;
+    const restore = async () => {
+      let authenticatedFromCallback = false;
+      const authFragment = new URLSearchParams(
+        window.location.hash.slice(1),
+      ).get("auth");
+      if (authFragment) {
+        try {
+          saveSession(
+            JSON.parse(
+              atob(
+                authFragment.replace(/-/g, "+").replace(/_/g, "/") +
+                  "=".repeat((4 - (authFragment.length % 4)) % 4),
+              ),
+            ),
+          );
+          authenticatedFromCallback = true;
+          window.history.replaceState(null, "", window.location.pathname);
+        } catch {
+          clearSession();
+        }
       }
-      if (user) {
-        const displayName = user.displayName || user.email.split("@")[0];
-        setCurrentUser(displayName);
-        localStorage.setItem("sp_current", displayName);
-        setAuthReady(true);
+
+      const verificationToken = new URLSearchParams(window.location.search).get(
+        "token",
+      );
+      if (verificationToken) {
+        try {
+          const response = await verifyEmail(verificationToken);
+          if (response.ok) {
+            saveSession(await response.json());
+            authenticatedFromCallback = true;
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        } catch {
+          // The normal login screen remains available when verification fails.
+        }
+      }
+
+      const session = await restoreSession();
+      if (!cancelled && session?.user?.name) {
+        setCurrentUser(session.user.name);
         setCurrentScreen((prev) => {
-          if (prev === "splash") {
-            checkResetAndStreak();
+          if (
+            authenticatedFromCallback ||
+            prev === "login" ||
+            prev === "signup"
+          ) {
+            window.history.replaceState(null, "", SCREEN_PATHS.dashboard);
+            return "dashboard";
+          }
+          if (prev !== "splash") return prev;
+          if (window.location.pathname === "/") {
+            window.history.replaceState(null, "", SCREEN_PATHS.dashboard);
             return "dashboard";
           }
           return prev;
         });
-      } else {
-        setCurrentUser(null);
-        localStorage.removeItem("sp_current");
-        setAuthReady(true);
       }
-    });
-    return () => unsub();
+      if (!cancelled) setAuthReady(true);
+    };
+    restore();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // --- Splash screen transition (no user case) ---
@@ -134,6 +212,23 @@ export default function App() {
     }, 2200);
     return () => clearTimeout(timer);
   }, [authReady]);
+
+  useEffect(() => {
+    const publicScreens = ["splash", "login", "signup", "forgot"];
+    if (authReady && !currentUser && !publicScreens.includes(currentScreen)) {
+      window.history.replaceState(null, "", SCREEN_PATHS.login);
+      setCurrentScreen("login");
+    }
+  }, [authReady, currentUser, currentScreen]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const screen = screenFromPath(window.location.pathname);
+      if (screen) setCurrentScreen(screen);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // --- Periodic Alarm Checker (30 seconds) ---
   useEffect(() => {
@@ -187,6 +282,7 @@ export default function App() {
   // --- App Initialization state checks ---
   const initApp = () => {
     checkResetAndStreak();
+    window.history.replaceState(null, "", SCREEN_PATHS.dashboard);
     // Reload page to re-initialize all user-scoped states from localStorage
     window.location.reload();
   };
@@ -339,15 +435,33 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await logout().catch(() => {});
     setCurrentUser(null);
-    localStorage.removeItem("sp_current");
+    clearSession();
     // Clear session-level temporary state by reloading to root
-    window.location.href = "/";
+    window.location.href = SCREEN_PATHS.login;
   };
 
+  const navigateToScreen = (screen) => {
+    if (screen === "ai-screen" && !currentUser) {
+      window.history.pushState(null, "", SCREEN_PATHS.login);
+      setCurrentScreen("login");
+      return;
+    }
+    const nextPath = SCREEN_PATHS[screen];
+    if (nextPath && window.location.pathname !== nextPath) {
+      window.history.pushState(
+        null,
+        "",
+        `${nextPath}${window.location.search}`,
+      );
+    }
+    setCurrentScreen(screen);
+  };
+
+  const visibleScreen = authReady ? currentScreen : "splash";
   const isMainScreen = !["splash", "login", "signup", "forgot"].includes(
-    currentScreen,
+    visibleScreen,
   );
 
   return (
@@ -410,8 +524,8 @@ export default function App() {
       <div className={isMainScreen ? "app-container" : ""}>
         {isMainScreen && (
           <Sidebar
-            currentScreen={currentScreen}
-            setCurrentScreen={setCurrentScreen}
+            currentScreen={visibleScreen}
+            setCurrentScreen={navigateToScreen}
             currentUser={currentUser}
             handleLogout={handleLogout}
           />
@@ -419,33 +533,33 @@ export default function App() {
 
         <div className={isMainScreen ? "main-content" : ""}>
           {/* Splash Screen */}
-          <Splash isActive={currentScreen === "splash"} />
+          <Splash isActive={visibleScreen === "splash"} />
 
           {/* Login Screen */}
           <Login
-            isActive={currentScreen === "login"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "login"}
+            setCurrentScreen={navigateToScreen}
             setCurrentUser={setCurrentUser}
             initApp={initApp}
           />
 
           {/* Forgot Password Screen */}
           <Forgot
-            isActive={currentScreen === "forgot"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "forgot"}
+            setCurrentScreen={navigateToScreen}
           />
 
           {/* Signup Screen */}
           <SignUp
-            isActive={currentScreen === "signup"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "signup"}
+            setCurrentScreen={navigateToScreen}
             setCurrentUser={setCurrentUser}
             initApp={initApp}
           />
 
           {/* Dashboard Screen */}
           <Dashboard
-            isActive={currentScreen === "dashboard"}
+            isActive={visibleScreen === "dashboard"}
             currentUser={currentUser}
             tasks={tasks}
             setTasks={setTasks}
@@ -455,20 +569,20 @@ export default function App() {
             setGameData={setGameData}
             addXP={addXP}
             showToast={showToast}
-            setCurrentScreen={setCurrentScreen}
+            setCurrentScreen={navigateToScreen}
           />
 
           {/* AI Assistant Screen */}
           <AIAssistant
-            isActive={currentScreen === "ai-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "ai-screen" && Boolean(currentUser)}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
           />
 
           {/* Mock Test Screen */}
           <MockTest
-            isActive={currentScreen === "test-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "test-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
             subjects={subjects}
@@ -479,8 +593,8 @@ export default function App() {
 
           {/* Plan Screen */}
           <StudyPlan
-            isActive={currentScreen === "plan-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "plan-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
             plans={plans}
@@ -489,8 +603,8 @@ export default function App() {
 
           {/* Notes Screen */}
           <Notes
-            isActive={currentScreen === "notes-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "notes-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
             notes={notes}
@@ -499,38 +613,38 @@ export default function App() {
 
           {/* Stats Screen */}
           <Stats
-            isActive={currentScreen === "stats-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "stats-screen"}
+            setCurrentScreen={navigateToScreen}
             tasks={tasks}
             gameData={gameData}
           />
 
           {/* Career Hub Screen */}
           <CareerHub
-            isActive={currentScreen === "career-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "career-screen"}
+            setCurrentScreen={navigateToScreen}
           />
 
           {/* Career Roadmap Screen */}
           <Roadmap
-            isActive={currentScreen === "roadmap-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "roadmap-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
           />
 
           {/* Placement Prep Screen */}
           <PlacementPrep
-            isActive={currentScreen === "placement-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "placement-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
           />
 
           {/* Resume Builder Screen */}
           <ResumeBuilder
-            isActive={currentScreen === "resume-screen"}
-            setCurrentScreen={setCurrentScreen}
+            isActive={visibleScreen === "resume-screen"}
+            setCurrentScreen={navigateToScreen}
             addXP={addXP}
             showToast={showToast}
           />

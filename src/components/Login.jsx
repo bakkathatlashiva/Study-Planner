@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
-import { auth, googleProvider } from "../firebase";
+import { googleLoginUrl, login, saveSession } from "../utils/api";
 
 export default function Login({
   isActive,
@@ -25,41 +24,22 @@ export default function Login({
     setError("");
     setLoading(true);
     try {
-      const credential = await signInWithEmailAndPassword(auth, e, p);
-      const user = credential.user;
-      // Block unverified email/password accounts
-      if (!user.emailVerified) {
-        await auth.signOut();
-        setError("❌ Please verify your email first. Check your Gmail inbox.");
-        return;
-      }
-      const displayName = user.displayName || user.email.split("@")[0];
-      setCurrentUser(displayName);
-      localStorage.setItem("sp_current", displayName);
+      const response = await login(e, p);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to log in.");
+      saveSession(data);
+      setCurrentUser(data.user.name);
       initApp();
     } catch (err) {
-      setError(`❌ ${firebaseErrorMessage(err.code)}`);
+      setError(`❌ ${err.message || "Unable to log in."}`);
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogle = async () => {
-    setError("");
     setGoogleLoading(true);
-    try {
-      const credential = await signInWithPopup(auth, googleProvider);
-      const user = credential.user;
-      const displayName = user.displayName || user.email.split("@")[0];
-      setCurrentUser(displayName);
-      localStorage.setItem("sp_current", displayName);
-      initApp();
-    } catch (err) {
-      const msg = firebaseErrorMessage(err.code);
-      if (msg) setError(`❌ ${msg}`);
-    } finally {
-      setGoogleLoading(false);
-    }
+    window.location.href = googleLoginUrl;
   };
 
   const handleKeyDown = (e) => {
@@ -171,30 +151,4 @@ export default function Login({
       </div>
     </div>
   );
-}
-
-function firebaseErrorMessage(code) {
-  switch (code) {
-    case "auth/user-not-found":
-    case "auth/wrong-password":
-    case "auth/invalid-credential":
-      return "Wrong email or password!";
-    case "auth/invalid-email":
-      return "Invalid email address!";
-    case "auth/too-many-requests":
-      return "Too many attempts. Try again later.";
-    case "auth/user-disabled":
-      return "This account has been disabled.";
-    case "auth/popup-blocked":
-      return "Popup blocked by browser. Please allow popups.";
-    case "auth/unauthorized-domain":
-      return "This domain is not authorized in Firebase. Add it in Firebase Console → Authentication → Settings → Authorized domains.";
-    case "auth/operation-not-allowed":
-      return "Google sign-in is not enabled. Enable it in Firebase Console.";
-    case "auth/cancelled-popup-request":
-    case "auth/popup-closed-by-user":
-      return ""; // silent
-    default:
-      return `Login failed (${code}). Please try again.`;
-  }
 }

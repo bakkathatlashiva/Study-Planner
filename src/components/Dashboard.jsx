@@ -207,7 +207,7 @@ export default function Dashboard({
               background: "#1a2240",
               borderRadius: "16px",
               padding: "28px 24px",
-              width: "280px",
+              width: "min(280px, calc(100vw - 32px))",
               textAlign: "center",
               boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
             }}

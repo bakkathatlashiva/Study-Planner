@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../firebase";
+import { forgotPassword } from "../utils/api";
 
 export default function Forgot({ isActive, setCurrentScreen }) {
   const [email, setEmail] = useState("");
@@ -18,7 +17,10 @@ export default function Forgot({ isActive, setCurrentScreen }) {
     setError("");
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, emailVal);
+      const response = await forgotPassword(emailVal);
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data.error || "Unable to send reset email.");
       setSuccessMsg("✅ Password reset email sent! Check your inbox.");
       setEmail("");
       setTimeout(() => {
@@ -26,8 +28,7 @@ export default function Forgot({ isActive, setCurrentScreen }) {
         setCurrentScreen("login");
       }, 3000);
     } catch (err) {
-      const msg = firebaseErrorMessage(err.code);
-      setError(`❌ ${msg}`);
+      setError(`❌ ${err.message || "Unable to send reset email."}`);
     } finally {
       setLoading(false);
     }
@@ -104,18 +105,4 @@ export default function Forgot({ isActive, setCurrentScreen }) {
       </div>
     </div>
   );
-}
-
-function firebaseErrorMessage(code) {
-  switch (code) {
-    case "auth/user-not-found":
-    case "auth/invalid-credential":
-      return "No account found with this email.";
-    case "auth/invalid-email":
-      return "Invalid email address!";
-    case "auth/too-many-requests":
-      return "Too many attempts. Try again later.";
-    default:
-      return "Failed to send reset email. Please try again.";
-  }
 }

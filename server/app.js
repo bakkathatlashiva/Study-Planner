@@ -1,0 +1,351 @@
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const Redis = require("ioredis");
+const webpush = require("web-push");
+require("dotenv").config();
+
+const { query } = require("./db");
+const { authenticate } = require("./auth");
+const authRoutes = require("./routes-auth");
+
+const app = express();
+const PORT = Number(process.env.PORT || 5000);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const API_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
+const CACHE_TTL = 60 * 60 * 24 * 7;
+
+app.use(helmet());
+app.use(cors({ origin: API_ORIGIN, credentials: true }));
+app.use(express.json({ limit: "64kb" }));
+app.use(
+  rateLimit({
+    windowMs: 60_000,
+    limit: 120,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+  }),
+);
+
+let redis = null;
+if (process.env.REDIS_URL || process.env.VALKEY_URL) {
+  redis = new Redis(process.env.REDIS_URL || process.env.VALKEY_URL, {
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    connectTimeout: 5000,
+  });
+  redis.on("ready", () => console.log("Redis/Valkey connected"));
+  redis.on("error", (error) =>
+    console.error("Redis/Valkey error:", error.message),
+  );
+}
+
+const pushReady = Boolean(
+  process.env.VAPID_PUBLIC_KEY &&
+  process.env.VAPID_PRIVATE_KEY &&
+  process.env.VAPID_SUBJECT,
+);
+if (pushReady) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT,
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY,
+  );
+}
+
+const extractMode = (system = "") => {
+  if (system.includes("mock test")) return "mock_test";
+  if (system.includes("motivational")) return "daily_coach";
+  if (system.includes("flashcard")) return "flashcards";
+  if (system.includes("coding expert")) return "debug";
+  if (system.includes("career roadmap")) return "roadmap";
+  if (system.includes("weak topics")) return "weakness_killer";
+  if (system.includes("exam readiness")) return "exam_readiness";
+  if (system.includes("placement")) return "placement_mode";
+  if (system.includes("summarize")) return "summarize";
+  return "explain";
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const callGemini = async (system, text, maxTokens = 800) => {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: `${system}\n\nUser Input: ${text}` }],
+              },
+            ],
+            generationConfig: {
+              maxOutputTokens: maxTokens,
+              thinkingConfig: { thinkingBudget: 0 },
+            },
+          }),
+        },
+      );
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new Error(`Gemini API ${response.status}`);
+        await sleep(500 * (attempt + 1));
+        continue;
+      }
+      if (!response.ok)
+        throw new Error(
+          `Gemini API ${response.status}: ${await response.text()}`,
+        );
+      const data = await response.json();
+      return (
+        data.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "I could not generate a response."
+      );
+    } catch (error) {
+      lastError =
+        error.name === "AbortError"
+          ? new Error("Gemini request timed out")
+          : error;
+      if (attempt < 2) await sleep(500 * (attempt + 1));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw lastError || new Error("Gemini request failed");
+};
+
+app.get("/health", async (_req, res) => {
+  try {
+    await query("SELECT 1");
+    return res.json({
+      ok: true,
+      database: "postgresql",
+      cache: Boolean(redis),
+    });
+  } catch (error) {
+    return res
+      .status(503)
+      .json({ ok: false, database: "unavailable", error: error.message });
+  }
+});
+
+app.use("/api/auth", authRoutes);
+
+app.post("/api/chat", authenticate, async (req, res, next) => {
+  const system = String(req.body.system || "").slice(0, 10000);
+  const text = String(req.body.text || "")
+    .trim()
+    .slice(0, 12000);
+  const maxTokens = Math.min(
+    Math.max(Number(req.body.maxTokens) || 800, 32),
+    2000,
+  );
+  if (!text) return res.status(400).json({ error: "Message is required." });
+  if (!GEMINI_API_KEY)
+    return res.status(503).json({ error: "AI service is not configured." });
+
+  const mode = extractMode(system);
+  const cacheKey = `ai:${mode}:${text.toLowerCase()}`;
+  try {
+    if (redis) {
+      const cached = await redis.get(cacheKey);
+      if (cached)
+        return res.json({ content: [{ text: cached }], source: "cache" });
+    }
+    const answer = await callGemini(system, text, maxTokens);
+    if (redis) await redis.set(cacheKey, answer, "EX", CACHE_TTL);
+    if (req.user?.sub) {
+      const existing = await query(
+        "SELECT id FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+        [req.user.sub],
+      );
+      let sessionId = existing.rows[0]?.id;
+      if (!sessionId) {
+        const session = await query(
+          "INSERT INTO chat_sessions (user_id, title) VALUES ($1, $2) RETURNING id",
+          [req.user.sub, text.slice(0, 80)],
+        );
+        sessionId = session.rows[0]?.id;
+      }
+      if (sessionId) {
+        await query(
+          "INSERT INTO chat_messages (session_id, role, content) VALUES ($1, 'user', $2), ($1, 'assistant', $3)",
+          [sessionId, text, answer],
+        );
+        await query(
+          "UPDATE chat_sessions SET updated_at = NOW() WHERE id = $1",
+          [sessionId],
+        );
+      }
+    }
+    return res.json({ content: [{ text: answer }], source: "gemini" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post(
+  "/api/notifications/push-subscription",
+  authenticate,
+  async (req, res, next) => {
+    const subscription = req.body.subscription;
+    if (!subscription?.endpoint || !subscription?.keys)
+      return res.status(400).json({ error: "Invalid push subscription." });
+    try {
+      await query(
+        `INSERT INTO push_subscriptions (user_id, endpoint, subscription)
+       VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, subscription = EXCLUDED.subscription`,
+        [req.user.sub, subscription.endpoint, JSON.stringify(subscription)],
+      );
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+app.get("/api/notifications", authenticate, async (req, res, next) => {
+  try {
+    const result = await query(
+      "SELECT id, type, title, body, data, read_at, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50",
+      [req.user.sub],
+    );
+    const unread = result.rows.filter(
+      (notification) => !notification.read_at,
+    ).length;
+    return res.json({ notifications: result.rows, unread });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch(
+  "/api/notifications/:id/read",
+  authenticate,
+  async (req, res, next) => {
+    try {
+      await query(
+        "UPDATE notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2",
+        [req.params.id, req.user.sub],
+      );
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+app.post(
+  "/api/notifications/read-all",
+  authenticate,
+  async (req, res, next) => {
+    try {
+      await query(
+        "UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL",
+        [req.user.sub],
+      );
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+app.delete("/api/notifications/:id", authenticate, async (req, res, next) => {
+  try {
+    await query("DELETE FROM notifications WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.sub,
+    ]);
+    return res.status(204).end();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+const sendDueReminders = async () => {
+  const lockKey = "study-planner:reminders:lock";
+  if (redis && !(await redis.set(lockKey, process.pid, "EX", 50, "NX"))) return;
+  try {
+    const due = await query(
+      `SELECT id, user_id, title, starts_at, 'study_session' AS type
+       FROM study_sessions
+       WHERE completed_at IS NULL AND starts_at BETWEEN NOW() + INTERVAL '9 minutes' AND NOW() + INTERVAL '11 minutes'
+       UNION ALL
+       SELECT id, user_id, title, starts_at, 'task' AS type
+       FROM tasks
+       WHERE completed_at IS NULL AND starts_at BETWEEN NOW() + INTERVAL '9 minutes' AND NOW() + INTERVAL '11 minutes'`,
+    );
+    for (const item of due.rows) {
+      const reminderKey = `${item.type}:${item.id}:${new Date(item.starts_at).toISOString().slice(0, 16)}`;
+      const created = await query(
+        `INSERT INTO notifications (user_id, type, title, body, data)
+         SELECT $1, $2, $3, $4, $5::jsonb
+         WHERE NOT EXISTS (
+           SELECT 1 FROM notifications WHERE user_id = $1 AND data->>'reminderKey' = $5::jsonb->>'reminderKey'
+         )
+         RETURNING id`,
+        [
+          item.user_id,
+          item.type,
+          "Study Assistant reminder",
+          `${item.title} starts in 10 minutes.`,
+          JSON.stringify({ reminderKey }),
+        ],
+      );
+      if (created.rowCount && pushReady) {
+        const subscriptions = await query(
+          "SELECT id, endpoint, subscription FROM push_subscriptions WHERE user_id = $1",
+          [item.user_id],
+        );
+        for (const subscription of subscriptions.rows) {
+          try {
+            await webpush.sendNotification(
+              subscription.subscription,
+              JSON.stringify({
+                title: "Study Assistant",
+                body: `${item.title} starts in 10 minutes.`,
+              }),
+            );
+          } catch (error) {
+            if (error.statusCode === 404 || error.statusCode === 410)
+              await query("DELETE FROM push_subscriptions WHERE id = $1", [
+                subscription.id,
+              ]);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Reminder worker error:", error.message);
+  }
+};
+
+setInterval(sendDueReminders, 60_000).unref();
+
+app.use((error, _req, res, _next) => {
+  console.error("API error:", error.message);
+  if (["28P01", "3D000", "ECONNREFUSED"].includes(error.code)) {
+    return res.status(503).json({
+      error:
+        "Database unavailable. Check server/.env DATABASE_URL and PostgreSQL credentials.",
+    });
+  }
+  return res.status(500).json({ error: "Unexpected server error." });
+});
+
+module.exports = {
+  app,
+  start: () =>
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`)),
+};

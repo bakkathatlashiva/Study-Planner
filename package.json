@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node start-dev.js",
+    "dev:client": "vite",
     "dev:all": "node start-dev.js",
     "build": "vite build",
     "lint": "oxlint",
@@ -12,7 +13,6 @@
   },
   "dependencies": {
     "chart.js": "^4.5.1",
-    "firebase": "^11.10.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

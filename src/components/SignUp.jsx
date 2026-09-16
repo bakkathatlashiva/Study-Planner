@@ -1,13 +1,10 @@
-import React, { useState } from "react";
 import {
-  createUserWithEmailAndPassword,
-  updateProfile,
-  sendEmailVerification,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  reload,
-} from "firebase/auth";
-import { auth, googleProvider } from "../firebase";
+  googleLoginUrl,
+  register,
+  resendVerification,
+  saveSession,
+} from "../utils/api";
+import React, { useState } from "react";
 
 export default function SignUp({
   isActive,
@@ -54,20 +51,20 @@ export default function SignUp({
     setError("");
     setLoading(true);
     try {
-      const credential = await createUserWithEmailAndPassword(
-        auth,
-        emailVal,
-        passVal,
-      );
-      await updateProfile(credential.user, { displayName: nameVal });
-      // Send verification email to Gmail
-      await sendEmailVerification(credential.user);
-      // Sign out immediately — don't let them in until verified
-      await auth.signOut();
-      setVerifyEmail(emailVal);
-      setVerifyStep(true);
+      const response = await register(nameVal, emailVal, passVal);
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data.error || "Unable to create account.");
+      if (data.requiresVerification) {
+        setVerifyEmail(emailVal);
+        setVerifyStep(true);
+      } else {
+        saveSession(data);
+        setCurrentUser(data.user.name);
+        initApp();
+      }
     } catch (err) {
-      setError(`❌ ${firebaseErrorMessage(err.code)}`);
+      setError(`❌ ${err.message || "Unable to create account."}`);
     } finally {
       setLoading(false);
     }
@@ -78,27 +75,9 @@ export default function SignUp({
     setVerifyMsg("");
     setError("");
     try {
-      // Sign in again to get fresh user object
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        verifyEmail,
-        password,
-      );
-      await reload(credential.user);
-      if (credential.user.emailVerified) {
-        const displayName =
-          credential.user.displayName || credential.user.email.split("@")[0];
-        setCurrentUser(displayName);
-        localStorage.setItem("sp_current", displayName);
-        initApp();
-      } else {
-        await auth.signOut();
-        setError(
-          "❌ Email not verified yet. Please click the link in your Gmail inbox.",
-        );
-      }
+      setError("❌ Open the verification link from your email, then sign in.");
     } catch (err) {
-      setError(`❌ ${firebaseErrorMessage(err.code)}`);
+      setError(`❌ ${err.message || "Unable to verify email."}`);
     } finally {
       setCheckingVerify(false);
     }
@@ -109,15 +88,12 @@ export default function SignUp({
     setVerifyMsg("");
     setError("");
     try {
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        verifyEmail,
-        password,
-      );
-      await sendEmailVerification(credential.user);
-      await auth.signOut();
-      setVerifyMsg("✅ Verification email resent! Check your Gmail inbox.");
-    } catch (err) {
+      const response = await resendVerification(verifyEmail);
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data.error || "Unable to resend verification email.");
+      setVerifyMsg("✅ Check your inbox for the verification link.");
+    } catch {
       setError("❌ Failed to resend. Try again.");
     } finally {
       setResending(false);
@@ -125,23 +101,8 @@ export default function SignUp({
   };
 
   const handleGoogle = async () => {
-    setError("");
     setGoogleLoading(true);
-    try {
-      const credential = await signInWithPopup(auth, googleProvider);
-      const user = credential.user;
-      // Google accounts are always verified
-      const displayName = user.displayName || user.email.split("@")[0];
-      setCurrentUser(displayName);
-      localStorage.setItem("sp_current", displayName);
-      initApp();
-    } catch (err) {
-      if (err.code !== "auth/popup-closed-by-user") {
-        setError(`❌ ${firebaseErrorMessage(err.code)}`);
-      }
-    } finally {
-      setGoogleLoading(false);
-    }
+    window.location.href = googleLoginUrl;
   };
 
   // ── Verification waiting screen ──────────────────────────────────────────
@@ -387,24 +348,4 @@ export default function SignUp({
       </div>
     </div>
   );
-}
-
-function firebaseErrorMessage(code) {
-  switch (code) {
-    case "auth/email-already-in-use":
-      return "An account with this email already exists!";
-    case "auth/invalid-email":
-      return "Invalid email address!";
-    case "auth/weak-password":
-      return "Password is too weak!";
-    case "auth/too-many-requests":
-      return "Too many attempts. Try again later.";
-    case "auth/popup-blocked":
-      return "Popup blocked by browser. Please allow popups.";
-    case "auth/wrong-password":
-    case "auth/invalid-credential":
-      return "Incorrect password.";
-    default:
-      return "Registration failed. Please try again.";
-  }
 }

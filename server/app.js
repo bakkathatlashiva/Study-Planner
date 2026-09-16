@@ -8,7 +8,7 @@ const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 require("dotenv").config();
 
-const { query } = require("./db");
+const { query, initDb } = require("./db");
 const { authenticate } = require("./auth");
 const authRoutes = require("./routes-auth");
 const { googleRedirectUri, missingGoogleConfig } = require("./google-config");
@@ -293,12 +293,18 @@ app.delete("/api/notifications/:id", authenticate, async (req, res, next) => {
   }
 });
 
+let lastReminderWorkerError = "";
 const sendDueReminders = async () => {
+  if (!process.env.DATABASE_URL) return;
   const lockKey = "study-planner:reminders:lock";
   try {
     if (redis && redis.status === "ready") {
-      const acquired = await redis.set(lockKey, process.pid, "EX", 50, "NX");
-      if (!acquired) return;
+      try {
+        const acquired = await redis.set(lockKey, process.pid, "EX", 50, "NX");
+        if (!acquired) return;
+      } catch (redisErr) {
+        console.warn("Redis reminder lock error:", redisErr.message || redisErr.code);
+      }
     }
     const due = await query(
       `SELECT id, user_id, title, starts_at, 'study_session' AS type
@@ -350,15 +356,27 @@ const sendDueReminders = async () => {
       }
     }
   } catch (error) {
-    console.error("Reminder worker error:", error.message);
+    const errMsg =
+      error.message ||
+      error.code ||
+      (Array.isArray(error.errors) && error.errors[0]?.message) ||
+      String(error);
+    if (errMsg !== lastReminderWorkerError) {
+      console.error("Reminder worker error:", errMsg);
+      lastReminderWorkerError = errMsg;
+    }
   }
 };
 
 setInterval(sendDueReminders, 60_000).unref();
 
 app.use((error, _req, res, _next) => {
-  console.error("API error:", error.message);
-  if (["28P01", "3D000", "ECONNREFUSED"].includes(error.code)) {
+  const errMsg = error.message || error.code || String(error);
+  console.error("API error:", errMsg);
+  if (
+    ["28P01", "3D000", "ECONNREFUSED", "DB_UNCONFIGURED"].includes(error.code) ||
+    !process.env.DATABASE_URL
+  ) {
     return res.status(503).json({
       error:
         "Database unavailable. Check server/.env DATABASE_URL and PostgreSQL credentials.",
@@ -369,6 +387,8 @@ app.use((error, _req, res, _next) => {
 
 module.exports = {
   app,
-  start: () =>
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`)),
+  start: async () => {
+    await initDb();
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  },
 };

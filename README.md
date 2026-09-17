@@ -56,9 +56,15 @@ Required server values:
 DATABASE_URL=postgresql://user:password@host:5432/study_planner
 JWT_SECRET=use-a-long-random-secret
 GEMINI_API_KEY=your-server-only-key
+AI_CREDENTIAL_ENCRYPTION_KEY=your-32-byte-backend-only-key
 ALLOWED_ORIGIN=http://localhost:5173
 APP_URL=http://localhost:5173
 ```
+
+`AI_CREDENTIAL_ENCRYPTION_KEY` encrypts users' Gemini API keys at rest. Generate
+one as a 32-byte base64 or 64-character hex value and set it only in the
+backend environment. Users connect their own Gemini API key from the AI
+Assistant settings; Google Login does not provide Gemini API access or quota.
 
 `ALLOWED_ORIGIN` accepts comma-separated frontend origins for production and
 preview deployments. Use the exact browser origin without a path, for example
@@ -67,6 +73,7 @@ preview deployments. Use the exact browser origin without a path, for example
 Optional values:
 
 - `REDIS_URL` or `VALKEY_URL` for cache and worker coordination.
+- `GEMINI_MODEL` selects the Gemini model used for user-provided keys.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` for Google OAuth.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM` for email verification/reset messages.
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` for browser push delivery.
@@ -111,7 +118,8 @@ All protected endpoints use `Authorization: Bearer <accessToken>`.
 
 - `POST /api/chat` with `{ system, text, maxTokens }`
 - Gemini calls are made only by Express.
-- Redis/Valkey caches exact prompts when configured.
+- Redis/Valkey caches responses by authenticated user and hashed prompt when configured.
+- Gemini API keys are encrypted in PostgreSQL and are never returned to the frontend.
 - Requests are rate limited, bounded by a timeout, retried for temporary failures, and persisted to PostgreSQL chat sessions when authenticated.
 
 ### Notifications

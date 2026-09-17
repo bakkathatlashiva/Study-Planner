@@ -17,7 +17,17 @@ const app = express();
 const PORT = Number(process.env.PORT || 5000);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const API_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      return origin.replace(/\/$/, "");
+    }
+  });
 const CACHE_TTL = 60 * 60 * 24 * 7;
 
 if (missingGoogleConfig.length) {
@@ -27,8 +37,19 @@ if (missingGoogleConfig.length) {
 }
 console.log(`Google OAuth redirect URI: ${googleRedirectUri}`);
 
+app.set("trust proxy", 1);
+
 app.use(helmet());
-app.use(cors({ origin: API_ORIGIN, credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin))
+        return callback(null, true);
+      return callback(null, false);
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: "64kb" }));
 app.use(
   rateLimit({
@@ -80,6 +101,23 @@ const extractMode = (system = "") => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+class GeminiError extends Error {
+  constructor(message, { status, kind, retryable = false } = {}) {
+    super(message);
+    this.name = "GeminiError";
+    this.status = status;
+    this.kind = kind;
+    this.retryable = retryable;
+  }
+}
+
+const getRetryDelay = (response, attempt) => {
+  const retryAfter = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0)
+    return Math.min(retryAfter * 1000, 10_000);
+  return Math.min(750 * 2 ** attempt + Math.floor(Math.random() * 250), 10_000);
+};
+
 const callGemini = async (system, text, maxTokens = 800) => {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -107,14 +145,36 @@ const callGemini = async (system, text, maxTokens = 800) => {
         },
       );
       if (response.status === 429 || response.status >= 500) {
-        lastError = new Error(`Gemini API ${response.status}`);
-        await sleep(500 * (attempt + 1));
+        const providerError = await response.json().catch(() => ({}));
+        const providerMessage = String(
+          providerError.error?.message || "",
+        ).toLowerCase();
+        const quotaExhausted =
+          response.status === 429 &&
+          /(quota|resource_exhausted|daily limit|limit: 0)/i.test(
+            providerMessage,
+          );
+        lastError = new GeminiError(`Gemini API ${response.status}`, {
+          status: response.status,
+          kind: quotaExhausted
+            ? "quota"
+            : response.status === 429
+              ? "rate_limit"
+              : "server",
+          retryable: !quotaExhausted,
+        });
+        if (!lastError.retryable || attempt === 2) break;
+        await sleep(getRetryDelay(response, attempt));
         continue;
       }
-      if (!response.ok)
-        throw new Error(
-          `Gemini API ${response.status}: ${await response.text()}`,
-        );
+      if (!response.ok) {
+        const kind =
+          response.status === 401 || response.status === 403 ? "auth" : "api";
+        throw new GeminiError(`Gemini API ${response.status}`, {
+          status: response.status,
+          kind,
+        });
+      }
       const data = await response.json();
       return (
         data.candidates?.[0]?.content?.parts?.[0]?.text ||
@@ -123,9 +183,21 @@ const callGemini = async (system, text, maxTokens = 800) => {
     } catch (error) {
       lastError =
         error.name === "AbortError"
-          ? new Error("Gemini request timed out")
-          : error;
-      if (attempt < 2) await sleep(500 * (attempt + 1));
+          ? new GeminiError("Gemini request timed out", {
+              kind: "timeout",
+              retryable: true,
+            })
+          : error instanceof GeminiError
+            ? error
+            : new GeminiError("Gemini network request failed", {
+                kind: "network",
+                retryable: true,
+              });
+      if (!(lastError instanceof GeminiError) || lastError.retryable) {
+        if (attempt < 2) await sleep(750 * 2 ** attempt);
+      } else {
+        break;
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -161,7 +233,11 @@ app.post("/api/chat", authenticate, async (req, res, next) => {
   );
   if (!text) return res.status(400).json({ error: "Message is required." });
   if (!GEMINI_API_KEY)
-    return res.status(503).json({ error: "AI service is not configured." });
+    return res.status(503).json({
+      success: false,
+      message: "AI service is not configured.",
+      error: "AI service is not configured.",
+    });
 
   const mode = extractMode(system);
   const cacheKey = `ai:${mode}:${text.toLowerCase()}`;
@@ -303,7 +379,10 @@ const sendDueReminders = async () => {
         const acquired = await redis.set(lockKey, process.pid, "EX", 50, "NX");
         if (!acquired) return;
       } catch (redisErr) {
-        console.warn("Redis reminder lock error:", redisErr.message || redisErr.code);
+        console.warn(
+          "Redis reminder lock error:",
+          redisErr.message || redisErr.code,
+        );
       }
     }
     const due = await query(
@@ -372,17 +451,51 @@ setInterval(sendDueReminders, 60_000).unref();
 
 app.use((error, _req, res, _next) => {
   const errMsg = error.message || error.code || String(error);
+  if (error.name === "GeminiError") {
+    console.error("Gemini API error:", {
+      kind: error.kind,
+      status: error.status,
+      model: GEMINI_MODEL,
+    });
+    const response = {
+      success: false,
+      message:
+        "The AI service is temporarily unavailable. Please try again in a few seconds.",
+    };
+    if (error.kind === "rate_limit")
+      response.message =
+        "The AI service is temporarily busy. Please try again in a few seconds.";
+    if (error.kind === "quota")
+      response.message =
+        "The AI service quota is temporarily unavailable. Please try again later.";
+    if (error.kind === "auth")
+      response.message =
+        "The AI service is not authenticated. Please contact support.";
+    if (error.kind === "timeout" || error.kind === "network")
+      response.message =
+        "The AI service could not be reached. Please try again in a few seconds.";
+    return res.status(error.kind === "auth" ? 503 : 502).json(response);
+  }
   console.error("API error:", errMsg);
   if (
-    ["28P01", "3D000", "ECONNREFUSED", "DB_UNCONFIGURED"].includes(error.code) ||
+    ["28P01", "3D000", "ECONNREFUSED", "DB_UNCONFIGURED"].includes(
+      error.code,
+    ) ||
     !process.env.DATABASE_URL
   ) {
     return res.status(503).json({
+      success: false,
+      message:
+        "Database unavailable. Check server/.env DATABASE_URL and PostgreSQL credentials.",
       error:
         "Database unavailable. Check server/.env DATABASE_URL and PostgreSQL credentials.",
     });
   }
-  return res.status(500).json({ error: "Unexpected server error." });
+  return res.status(500).json({
+    success: false,
+    message: "Unexpected server error.",
+    error: "Unexpected server error.",
+  });
 });
 
 module.exports = {

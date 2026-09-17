@@ -60,6 +60,10 @@ ALLOWED_ORIGIN=http://localhost:5173
 APP_URL=http://localhost:5173
 ```
 
+`ALLOWED_ORIGIN` accepts comma-separated frontend origins for production and
+preview deployments. Use the exact browser origin without a path, for example
+`https://your-app.vercel.app,https://your-preview.vercel.app`.
+
 Optional values:
 
 - `REDIS_URL` or `VALKEY_URL` for cache and worker coordination.

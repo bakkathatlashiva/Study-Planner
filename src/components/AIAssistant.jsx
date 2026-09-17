@@ -145,6 +145,7 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
   const chatRef = useRef(null);
   const lastPromptRef = useRef("");
   const requestIdRef = useRef(0);
+  const isGeneratingRef = useRef(false);
 
   const scrollToBottom = (behavior = "smooth") =>
     chatEndRef.current?.scrollIntoView({ behavior, block: "end" });
@@ -212,7 +213,8 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
 
   const handleSendAIChat = async (prompt = aiInput) => {
     const text = prompt.trim();
-    if (!text || isGenerating) return;
+    if (!text || isGeneratingRef.current) return;
+    isGeneratingRef.current = true;
     lastPromptRef.current = text;
     const requestId = ++requestIdRef.current;
     setAiInput("");
@@ -232,7 +234,9 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
       );
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.error || "Server error");
+        throw new Error(
+          data.message || data.error || "The AI service could not respond.",
+        );
       }
       const reply = data.content[0].text;
       if (requestId !== requestIdRef.current) return;
@@ -251,7 +255,10 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
               "The assistant could not respond. Check that the backend is running.",
       );
     } finally {
-      setIsGenerating(false);
+      if (requestId === requestIdRef.current) {
+        isGeneratingRef.current = false;
+        setIsGenerating(false);
+      }
     }
   };
 
@@ -477,6 +484,7 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
               type="button"
               onClick={() => {
                 requestIdRef.current += 1;
+                isGeneratingRef.current = false;
                 setIsGenerating(false);
                 setAiChat((prev) => prev.filter((message) => !message.loading));
               }}

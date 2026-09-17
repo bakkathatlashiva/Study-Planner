@@ -462,12 +462,8 @@ app.use((error, _req, res, _next) => {
       message:
         "The AI service is temporarily unavailable. Please try again in a few seconds.",
     };
-    if (error.kind === "rate_limit")
-      response.message =
-        "The AI service is temporarily busy. Please try again in a few seconds.";
-    if (error.kind === "quota")
-      response.message =
-        "The AI service quota is temporarily unavailable. Please try again later.";
+    if (error.kind === "rate_limit" || error.kind === "quota")
+      response.message = "Limit reached. Please wait a moment and try again.";
     if (error.kind === "auth")
       response.message =
         "The AI service is not authenticated. Please contact support.";

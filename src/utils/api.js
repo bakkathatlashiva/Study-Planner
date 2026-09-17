@@ -63,17 +63,6 @@ export const callClaude = async (system, text, maxTokens = 800) => {
   });
 };
 
-export const getGeminiCredential = () => request("/api/ai/credentials");
-
-export const saveGeminiCredential = (apiKey) =>
-  request("/api/ai/credentials", {
-    method: "POST",
-    body: JSON.stringify({ apiKey }),
-  });
-
-export const removeGeminiCredential = () =>
-  request("/api/ai/credentials", { method: "DELETE" });
-
 export const restoreSession = async () => {
   const accessToken = localStorage.getItem("sp_access_token");
   const displayName = localStorage.getItem("sp_current");

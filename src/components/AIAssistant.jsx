@@ -1,10 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import {
-  callClaude,
-  getGeminiCredential,
-  removeGeminiCredential,
-  saveGeminiCredential,
-} from "../utils/api";
+import { callClaude } from "../utils/api";
 
 const MODES = [
   { id: "explain", label: "Explain a topic", icon: "i" },
@@ -143,12 +138,6 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
     }
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [geminiCredential, setGeminiCredential] = useState(null);
-  const [geminiKeyInput, setGeminiKeyInput] = useState("");
-  const [credentialLoading, setCredentialLoading] = useState(false);
-  const [credentialSaving, setCredentialSaving] = useState(false);
-  const [credentialError, setCredentialError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const chatEndRef = useRef(null);
@@ -221,64 +210,6 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
       JSON.stringify(history),
     );
   }, [history]);
-
-  useEffect(() => {
-    if (!isActive) return undefined;
-    let cancelled = false;
-    setCredentialLoading(true);
-    getGeminiCredential()
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok)
-          throw new Error(data.message || "Unable to load AI settings.");
-        if (!cancelled) setGeminiCredential(data.configured ? data : null);
-      })
-      .catch((error) => {
-        if (!cancelled) setCredentialError(error.message);
-      })
-      .finally(() => {
-        if (!cancelled) setCredentialLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isActive]);
-
-  const connectGemini = async (event) => {
-    event.preventDefault();
-    if (!geminiKeyInput.trim() || credentialSaving) return;
-    setCredentialSaving(true);
-    setCredentialError("");
-    try {
-      const response = await saveGeminiCredential(geminiKeyInput.trim());
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data.message || "Unable to save Gemini API key.");
-      setGeminiCredential(data);
-      setGeminiKeyInput("");
-    } catch (error) {
-      setCredentialError(error.message);
-    } finally {
-      setCredentialSaving(false);
-    }
-  };
-
-  const disconnectGemini = async () => {
-    if (credentialSaving) return;
-    setCredentialSaving(true);
-    setCredentialError("");
-    try {
-      const response = await removeGeminiCredential();
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data.message || "Unable to remove Gemini API key.");
-      setGeminiCredential(null);
-    } catch (error) {
-      setCredentialError(error.message);
-    } finally {
-      setCredentialSaving(false);
-    }
-  };
 
   const handleSendAIChat = async (prompt = aiInput) => {
     const text = prompt.trim();
@@ -393,89 +324,11 @@ export default function AIAssistant({ isActive, setCurrentScreen, addXP }) {
               className="ai-icon-btn"
               type="button"
               aria-label="More options"
-              aria-expanded={settingsOpen}
-              onClick={() => {
-                setSettingsOpen((open) => !open);
-                setCredentialError("");
-              }}
             >
               •••
             </button>
           </div>
         </header>
-
-        {settingsOpen && (
-          <section className="ai-settings" aria-label="AI Assistant settings">
-            <div className="ai-settings-heading">
-              <div>
-                <span className="ai-settings-eyebrow">
-                  AI Assistant settings
-                </span>
-                <h2>Gemini API</h2>
-              </div>
-              <button
-                className="ai-settings-close"
-                type="button"
-                aria-label="Close AI Assistant settings"
-                onClick={() => setSettingsOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-            <p className="ai-settings-copy">
-              Use your own Gemini API key and API project. Your Gemini API usage
-              and applicable limits belong to your project; Google Login does
-              not automatically provide Gemini API access.
-            </p>
-            {credentialLoading ? (
-              <p className="ai-settings-status">Loading connection...</p>
-            ) : geminiCredential ? (
-              <div className="ai-credential-connected">
-                <div>
-                  <strong>Gemini API connected</strong>
-                  <span>Key: {geminiCredential.maskedApiKey}</span>
-                </div>
-                <button
-                  className="ai-settings-remove"
-                  type="button"
-                  onClick={disconnectGemini}
-                  disabled={credentialSaving}
-                >
-                  Remove Gemini API key
-                </button>
-              </div>
-            ) : (
-              <form className="ai-credential-form" onSubmit={connectGemini}>
-                <label htmlFor="gemini-api-key">
-                  Use your own Gemini API key
-                </label>
-                <input
-                  id="gemini-api-key"
-                  type="password"
-                  value={geminiKeyInput}
-                  onChange={(event) => setGeminiKeyInput(event.target.value)}
-                  placeholder="Gemini API key"
-                  autoComplete="off"
-                />
-                <button
-                  type="submit"
-                  disabled={credentialSaving || !geminiKeyInput.trim()}
-                >
-                  {credentialSaving ? "Connecting..." : "Connect"}
-                </button>
-              </form>
-            )}
-            <p className="ai-settings-note">
-              Your Gemini API key is used only for your AI Assistant requests.
-              Keep your API key private.
-            </p>
-            {credentialError && (
-              <p className="ai-settings-error" role="alert">
-                {credentialError}
-              </p>
-            )}
-          </section>
-        )}
 
         <aside className="ai-history-drawer" aria-label="Chat history">
           <div className="ai-drawer-head">

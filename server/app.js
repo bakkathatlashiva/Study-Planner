@@ -4,7 +4,6 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const Redis = require("ioredis");
 const webpush = require("web-push");
-const crypto = require("crypto");
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 require("dotenv").config();
@@ -13,15 +12,10 @@ const { query, initDb } = require("./db");
 const { authenticate } = require("./auth");
 const authRoutes = require("./routes-auth");
 const { googleRedirectUri, missingGoogleConfig } = require("./google-config");
-const {
-  CredentialEncryptionError,
-  getGeminiCredential,
-  removeGeminiCredential,
-  saveGeminiCredential,
-} = require("./ai-credentials");
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const allowedOrigins = (process.env.ALLOWED_ORIGIN || "http://localhost:5173")
   .split(",")
@@ -124,20 +118,17 @@ const getRetryDelay = (response, attempt) => {
   return Math.min(750 * 2 ** attempt + Math.floor(Math.random() * 250), 10_000);
 };
 
-const callGemini = async (apiKey, system, text, maxTokens = 800) => {
+const callGemini = async (system, text, maxTokens = 800) => {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
+          headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
             contents: [
@@ -231,54 +222,6 @@ app.get("/health", async (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 
-app.get("/api/ai/credentials", authenticate, async (req, res, next) => {
-  try {
-    const credential = await getGeminiCredential(req.user.sub);
-    return res.json(
-      credential
-        ? {
-            configured: true,
-            provider: "gemini",
-            maskedApiKey: credential.maskedApiKey,
-            updatedAt: credential.updatedAt,
-          }
-        : { configured: false, provider: "gemini" },
-    );
-  } catch (error) {
-    return next(error);
-  }
-});
-
-app.post("/api/ai/credentials", authenticate, async (req, res, next) => {
-  const apiKey = String(req.body.apiKey || "").trim();
-  if (apiKey.length < 20 || apiKey.length > 200)
-    return res.status(400).json({
-      success: false,
-      message: "Enter a valid Gemini API key.",
-    });
-  try {
-    const credential = await saveGeminiCredential(req.user.sub, apiKey);
-    return res.status(201).json({
-      success: true,
-      configured: true,
-      provider: "gemini",
-      maskedApiKey: credential.maskedApiKey,
-      updatedAt: credential.updatedAt,
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
-
-app.delete("/api/ai/credentials", authenticate, async (req, res, next) => {
-  try {
-    await removeGeminiCredential(req.user.sub);
-    return res.json({ success: true, configured: false, provider: "gemini" });
-  } catch (error) {
-    return next(error);
-  }
-});
-
 app.post("/api/chat", authenticate, async (req, res, next) => {
   const system = String(req.body.system || "").slice(0, 10000);
   const text = String(req.body.text || "")
@@ -289,20 +232,16 @@ app.post("/api/chat", authenticate, async (req, res, next) => {
     2000,
   );
   if (!text) return res.status(400).json({ error: "Message is required." });
+  if (!GEMINI_API_KEY)
+    return res.status(503).json({
+      success: false,
+      message: "AI service is not configured.",
+      error: "AI service is not configured.",
+    });
+
   const mode = extractMode(system);
+  const cacheKey = `ai:${mode}:${text.toLowerCase()}`;
   try {
-    const credential = await getGeminiCredential(req.user.sub);
-    if (!credential)
-      return res.status(503).json({
-        success: false,
-        code: "GEMINI_KEY_NOT_CONFIGURED",
-        message: "Connect your Gemini API key to use the AI Assistant.",
-      });
-    const promptHash = crypto
-      .createHash("sha256")
-      .update(`${system}\n\n${text}`)
-      .digest("hex");
-    const cacheKey = `ai:${req.user.sub}:${mode}:${promptHash}`;
     if (redis && redis.status === "ready") {
       try {
         const cached = await redis.get(cacheKey);
@@ -312,7 +251,7 @@ app.post("/api/chat", authenticate, async (req, res, next) => {
         console.warn("Redis cache get error:", cacheErr.message);
       }
     }
-    const answer = await callGemini(credential.apiKey, system, text, maxTokens);
+    const answer = await callGemini(system, text, maxTokens);
     if (redis && redis.status === "ready") {
       try {
         await redis.set(cacheKey, answer, "EX", CACHE_TTL);
@@ -520,35 +459,18 @@ app.use((error, _req, res, _next) => {
     });
     const response = {
       success: false,
-      code: "AI_SERVICE_UNAVAILABLE",
       message:
         "The AI service is temporarily unavailable. Please try again in a few seconds.",
     };
-    if (error.kind === "rate_limit" || error.kind === "quota") {
-      response.code = "RATE_LIMITED";
+    if (error.kind === "rate_limit" || error.kind === "quota")
       response.message = "Limit reached. Please wait a moment and try again.";
-    }
     if (error.kind === "auth")
       response.message =
         "The AI service is not authenticated. Please contact support.";
     if (error.kind === "timeout" || error.kind === "network")
       response.message =
         "The AI service could not be reached. Please try again in a few seconds.";
-    const status =
-      error.kind === "rate_limit" || error.kind === "quota"
-        ? 429
-        : error.kind === "auth"
-          ? 503
-          : 502;
-    return res.status(status).json(response);
-  }
-  if (error instanceof CredentialEncryptionError) {
-    console.error("AI credential storage error:", error.message);
-    return res.status(503).json({
-      success: false,
-      code: "AI_CREDENTIAL_STORAGE_UNAVAILABLE",
-      message: "AI credential storage is temporarily unavailable.",
-    });
+    return res.status(error.kind === "auth" ? 503 : 502).json(response);
   }
   console.error("API error:", errMsg);
   if (
